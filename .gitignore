@@ -1,0 +1,12 @@
+# .gitignore
+__pycache__/
+*.pyc
+out/
+tmp/
+~$*
+*.SLDPRT
+*.SLDASM
+*.SLDDRW
+*.step
+*.stl
+publish_to_github.ps1
