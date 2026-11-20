@@ -3,7 +3,7 @@
 
 四种模式（按耗时排序）：
     python run_all.py --static   只跑静态层，不启动 SW（0.7 秒）★ 每次改完先跑这个
-    python run_all.py --quick    静态层 + smoke + features（约 2.5 分钟）★ 日常够用
+    python run_all.py --quick    静态层 + smoke + features + assembly + doctest（约 8 分钟）★ 日常够用
     python run_all.py            全量，单 SW 实例（约 6.5 分钟）
     python run_all.py --cold     全量 + 每套件冷启 SW（约 10 分钟，排障用）
     python run_all.py smoke draft  只跑指定套件
@@ -38,6 +38,9 @@ SW_SUITES = [
     ("props",      "test_props.py",      "PROPS PASS",     "属性/配置/材料", False),
     ("surface",    "test_surface.py",    "SURFACE PASS",   "曲面 + 结构件焊件", False),
     ("motion",     "test_motion.py",     "MOTION PASS",    "装配体 + 运动算例 + 计算", False),
+    ("assembly",   "test_assembly.py",   "ASSEMBLY PASS",  "端到端：摆位/固定/配合/漂移/出图/重开", True),
+    ("doctest",    "doctest_examples.py", "DOC EXAMPLES PASS", "SKILL.md 示例代码实跑", True),
+    ("capcheck",   "capcheck.py",        "CAP CHECK PASS",  "能力表抽查：阵列/镜像/孔向导/曲面/焊件", True),
 ]
 
 STATIC_SUITES = [
@@ -196,7 +199,7 @@ def main():
 
     if quick:
         sw_suites = [s for s in SW_SUITES if s[4]]
-        mode_desc = "quick 模式，约 2.5 min"
+        mode_desc = "quick 模式，约 8 min"
     else:
         sw_suites = [s for s in SW_SUITES if not want or s[0] in want]
         mode_desc = "冷启模式，约 10 min" if cold else "共用单实例，约 6.5 min"

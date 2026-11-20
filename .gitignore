@@ -1,12 +1,19 @@
-# .gitignore
+# 测试运行产物
+scripts/out/
+*.last_pass
+
+# Python
 __pycache__/
 *.pyc
-out/
-tmp/
-~$*
-*.SLDPRT
-*.SLDASM
-*.SLDDRW
-*.step
-*.stl
-publish_to_github.ps1
+*.pyo
+
+# SolidWorks 临时/备份
+*.SLDPRT~
+*.SLDASM~
+~$*.SLDPRT
+~$*.SLDASM
+~$*.SLDDRW
+
+# 系统
+Thumbs.db
+.DS_Store

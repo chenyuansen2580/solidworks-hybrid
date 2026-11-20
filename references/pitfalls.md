@@ -319,18 +319,25 @@ V.place(sw, comp, V.rot_z(0), (x, y, z))   # (x,y,z) 被当作组件的【平移
 - `V.snapshot()` 内部有 GetBox 的 3 级回退，能读组件 bbox；
   直接调 `comp.GetBox(0)` 在早绑定下报「类型不匹配」。
 
-### P2. 装配体出图缩放：`ViewZoomtofit2 + ViewZoomin` 最稳
+### P2. 装配体出图缩放：`ViewZoomtofit2 + ViewZoomout` 最稳
 
-试过的三种方式：
+试过的四种方式：
 
 | 方式 | 结果 |
 |---|---|
 | `save_png(..., fit=True, margin=0.08)` | **过紧**，边缘零件被裁掉 |
 | `ViewZoomTo2(bbox 外扩 25%)` | 按包围球算，宽高比不匹配仍裁切 |
-| **`ViewZoomtofit2()` + `ViewZoomin()`** | ✓ 完整显示且留边 |
+| `ViewZoomtofit2()` + ~~`ViewZoomin()`~~ | **放大过头**，边缘零件仍被裁（2026-11-20 纠正） |
+| **`ViewZoomtofit2()` + `ViewZoomout()`** | ✓ 完整显示且留边（退一步才是对的） |
 
-★ `margin` 参数在装配体上不可靠，**出图前用 Zoomtofit+Zoomin 手动调**。
-★ 四视图逐个 `ShowNamedView2` → `ViewZoomtofit2` → `ViewZoomin` → `SaveAs3`。
+★★ 2026-11-20 修正：原结论写 `ViewZoomin()` 是**反的**。
+  `ViewZoomin` 是"放大"，装配体 fit 之后已经贴边，再放大必裁；
+  要用 **`ViewZoomout`** 退一步留边。
+  e2e 套件实测：`Zoomout` 版四视图 36K/9K/17.6K/10K 全部完整，
+  `Zoomin` 版 iso 图右侧零件被切掉一半。
+
+★ `margin` 参数在装配体上不可靠，**出图前用 Zoomtofit+Zoomout 手动调**。
+★ 四视图逐个 `ShowNamedView2` → `ViewZoomtofit2` → `ViewZoomout` → `SaveAs3`。
 
 ### P3. 焊件被"端部切齐"截断
 
@@ -409,3 +416,268 @@ ax = max(range(3), key=lambda i: abs(n[i]))   # 主法向轴
 ```
 
 **查签名**：`grep "def 方法名" 类型库文件`；接口归属必须先查再写，不靠记忆。
+
+---
+
+## S. 装配 / 扫描 / 工程图（2026-11-20 同步带模组实战，11 条新坑）
+
+### S1 ★ 切除方向：reverse 不能传给 Flip
+
+**现象**：`cut_checked(m, sk, 6.0, reverse=True)` 之后，P5 滑台板 4 个沉孔少切
+73319 mm³ —— 正好等于「整块 − 4 个圆柱」，即**切掉了轮廓外侧**。
+
+**根因**：`FeatureCut4` 第 2 参 `Flip` 是【保留轮廓 / 切外侧】(flip side to cut)，
+不是反向。方向在第 3 参 `Direction`。
+
+| 参数 | 含义 |
+|---|---|
+| `Flip`（第 2 参） | True = 保留轮廓切外侧 |
+| `Direction`（第 3 参） | True = 沿草图正法向，False = 负法向 |
+
+**修法**（已改进 swlib_v2）：
+```python
+f = fm.FeatureCut4(sd, False, not reverse, t1, t2, d1, d2, ...)
+#                      ^Flip=False      ^Direction
+```
+**注意**：`Dir=False` 在负法向一侧**没有材料**时返回 None，这不是参数错误。
+板向 +Y 拉伸、草图在 y=0 时，负法向无材料 → 只能 `Dir=True`。
+`StartOffset` 参数在本机实测**完全无效**（切 12mm 和切 6mm 结果一样），别指望它调盲孔起点。
+
+### S2 ★ fillet / chamfer 多条边：append 必须逐次递增
+
+**现象**：P2 端盖 4 条外框边倒 C1，期望切 199.5，实际只切 50.0
+（= 100 × 0.5，正好 **1 条边**）。圆角看起来"成功"，实际只倒了一条。
+
+**根因**：循环里一律 `Select2(False, 0)`，第一个参数是 append，
+传 False 会每次**替换**选择集，最终只剩最后一条边。
+
+**修法**（已改进 swlib.py，新增 `_select_edges`）：
+```python
+for i, e in enumerate(edges):
+    wrap(e, "IEntity").Select2(i > 0, 0)   # 首条 False 清空，其余 True 追加
+```
+
+### S3 ★ CreateArc2 参数单位是【米】
+
+**现象**：跑道形路径画完，端点读数是 `(480000, -32000)` 而不是 `(480, -32)`，
+草图看着闭合、拉伸和扫描全失败。
+
+**根因**：`V.L.line` 内部已乘 `MM=0.001`，但直接调 `m.CreateArc2` 不会。
+`CreateArc2` 收米，`swlib.line` 收毫米。
+
+**修法**：
+```python
+m.CreateArc2(C * MM, 0.0, 0.0,            # 圆心
+             C * MM, -R2 * MM, 0.0,      # 起点
+             C * MM,  R2 * MM, 0.0, 1)   # 终点，1=逆时针
+```
+
+### S4 ★ 扫描失败的头号原因：轮廓圆心没落在路径起点上
+
+**现象**：跑道形闭环路径（1111mm）+ Right Plane 上 R1.5 圆轮廓，扫描恒返回 None。
+
+**排查矩阵**（同一路径，只改轮廓位置）：
+
+| 轮廓圆心 | 结果 |
+|---|---|
+| (0, −16) = 路径起点 | **OK** vol=7848.4，dev −0.09% |
+| (0, 0) | None |
+| Top Plane (0,0) | None |
+
+**铁律**：轮廓圆心必须**精确重合**于路径起点坐标，不是"靠近"。
+另外轮廓平面必须垂直于路径起点处的**切线**方向。
+闭环路径可以扫（官方文档说 twist 须整圈倍数，本机实测 twist=0 亦通过）。
+
+### S5 ★ IFace2.GetBox() 返回零件局部坐标
+
+**现象**：装配体里挑"基座顶面 y=50"，用世界坐标筛，一个面都挑不到。
+
+**根因**：`IFace2.GetBox()` 和 `ISurface.PlaneParams` 的法向都是**零件局部坐标**，
+不是装配世界坐标。P6 导轨世界 x = −200..300，但面 box 显示 −250..250。
+
+**修法**：挑面用零件自身尺寸给值；要世界坐标得叠加 `IComponent2.Transform2`。
+
+### S6 ★ V.place 设的是组件原点，不是 bbox 中心
+
+**现象**：按目标位置摆件，非对称零件（如焊件框、电机板）整体偏移。
+
+**修法**：迭代把 bbox 最小角移到目标点，3~5 次收敛到 0.05mm：
+```python
+def place_to(comp, R, target_min, iters=5):
+    V.place(sw, comp, R, (0, 0, 0))
+    t = [0.0, 0.0, 0.0]
+    for _ in range(iters):
+        b = [x * 1000 for x in comp.GetBox(0, False)]
+        d = [target_min[i] - b[i] for i in range(3)]
+        if max(abs(x) for x in d) < 0.05:
+            break
+        t = [t[i] + d[i] for i in range(3)]
+        V.place(sw, comp, R, t)
+```
+
+### S7 ★ 焊件切割清单要存盘重开才出现
+
+**现象**：焊件建好，`feature_tree` 里 `WeldmentFeature` 有了，但 `CutListFolder` 为 0，
+`InsertWeldmentCutList2(None)` 也返回 None。
+
+**修法**：存盘 → 关闭 → 重开，`CutListFolder` 才出现在特征树（实测 2 项）。
+`InsertWeldmentCutList2` 是插表格用的，不是生成切割清单的。
+
+### S8 ★ 型材库默认配置是 6 英寸，必须用 config 指定小规格
+
+**现象**：700×300 焊件框体积 4,879,147 mm³，渲染时把整个模型都盖住了。
+
+**根因**：`find_weldment_profiles()` 只给 .sldlfp 文件路径，默认配置是库里最大规格
+（152mm 角钢）。该库实际有 91 个配置。
+
+**修法**：
+```python
+V.structural_weldment(m, sk, prof, config="Al LS ANGLE SQR END 1 x 0.75 x 0.125")
+# 25.4 x 19.05 x 3.18 mm，体积降到 260,849
+```
+查配置名：`open_doc(prof)` → `GetConfigurationNames()`。
+
+### S9 ★ 工程图：中文视图名 + IDrawingDoc 宿主
+
+**现象**：`CreateDrawViewFromModelView3` 用 `*Isometric` / `*Front` 一律返回 False，
+`*等轴测` / `*前视` 返回 True。
+
+**三条铁律**：
+1. 本机 SW 是**中文界面**，视图名必须中文：`*等轴测` `*前视` `*上视`
+2. 方法在 **IDrawingDoc** 上，不在 IModelDoc2（`getattr` 直接 AttributeError）
+3. 装配体必须先在会话里打开并激活
+
+**验证视图真插进去了**：读返回值 `V.com_member(V.wrap(r,"IView"),"GetName2")`
+→ "工程图视图1"；SLDDRW 从 25 KB 涨到 340 KB 以上。
+**别用 `GetFirstView`/`GetNextView` 数视图**，本机第二步就抛异常。
+
+### S10 ★ 干涉检查必须调 IAssemblyDoc
+
+**现象**：`V.check_interference(asm)` 返回 `('ERROR', '类型不匹配')`，
+误判成"有干涉"。
+
+**根因**：`ToolsCheckInterference2` 在 **IAssemblyDoc** 上，
+旧版 `swlib_v2.check_interference` 用 IModelDoc2 调必抛 −2147352571。
+
+**修法（已落地，2026-11-20 修完）**：
+```python
+ok, raw = V.interference_ok(asm)     # (True, (None, None)) —— 推荐
+V.check_interference(asm)            # 底层版，内部已强制 wrap IAssemblyDoc
+```
+★ 函数内部现在先 `wrap(asm, "IAssemblyDoc")` 再调，传 IModelDoc2 进来也不会抛。
+★ 但**别自己直接调** `asm.ToolsCheckInterference2(...)` —— 走封装。
+
+### S11 零厚度曲面体在装配体不渲染
+
+**现象**：P11 护罩（0 实体 2 曲面）在零件里能出图，装配体里完全看不见，
+`GetBody()` 返回 False。
+
+**根因**：SW 装配体默认不渲染曲面体。
+
+**修法**：`sw.SetUserPreferenceToggle(155, True)` 和 `(209, True)` 开曲面显示；
+若仍不显示，就在总装里隐藏该组件，单独出零件图证明曲面能力，并在报告里注明。
+
+### S12 ★ 装配必须一次成型 —— 反复加/删配合会让视口彻底锁死
+
+**现象**（最诡异的一条）：
+`belt_actuator.SLDASM` 经过几轮"加配合 → 删配合 → 求解器拉动"之后，
+`ShowNamedView2` / `Orientation3` / `SaveAs3` / `SaveBMP` **全部失效**：
+- 四视图 md5 完全相同，图片大小恒为 129823 B
+- 改用 `SaveBMP` 得到 2.6 MB BMP，但四张内容一样
+- 改用 `Orientation3` 显式设矩阵，仍然一样
+- `ViewZoomtofit2` 后图像被裁切、视角不对
+
+**对照实验**（决定性证据）：
+新建一个装配体，只插 2 个零件，同一套 `ShowNamedView2 + ViewZoomtofit2 +
+GraphicsRedraw2 + SaveAs3` 立刻正常 —— 四视图 95K / 5.5K / 15.7K / 7.3K，
+md5 互异。**API 没问题，是那个 .SLDASM 文件坏了。**
+
+**根因**：反复删除配合、求解器多次重算，文档内部状态损坏，视口不再响应
+视图指令。存盘重开也救不回来。
+
+**修法 —— 装配一次成型**（`b6_all.py`）：
+```
+新建装配体 → 逐件插入并用 bbox 迭代摆位 → 【全部固定】→ 上色
+→ 加 10 组配合（固定状态下漂移恒 0）→ 隐藏曲面件 → 出四视图 → 存盘
+```
+全部在**同一个会话、同一个函数**里完成，中途不存盘、不重开、不删配合。
+
+**配套铁律**：
+1. **全部组件先 Fix 再加配合**。不固定时，一个平面重合配合会让零件在其余
+   5 个自由度上乱跑 —— 实测 `p4_pulley` 从 Y −33.9..33.9 漂到 12.7..101.3，
+   总漂移 135 mm，整个装配散架。全部固定后漂移恒 0.00 mm。
+2. **配合的距离值必须等于摆放时的真实间隙**。摆放间隙 12.5 却传 10，
+   求解器会把零件拉走。先量 bbox 再定距离。
+3. **每条配合后比对所有组件 bbox**，漂移 >1mm 就判该配合不一致：
+```python
+def max_drift(a, b):
+    return max(max(abs(a[k][i] - b[k][i]) for i in range(6))
+               for k in a if k in b)
+```
+
+**顺带纠正两条旧结论**：
+- `ShowNamedView2` 在本机对**健康文档**完全正常，返回 None 是 void 返回值的正常表现
+- `SaveAs3` 对装配体出 PNG 也没问题（127K / 9K / 35K / 16K 四张各不相同）
+
+### S13 ★ mirror / circular_pattern 的 mark 与轴（两个都写反过）
+
+**mirror_checked 旧版 mark 体系是反的**：
+
+| 版本 | 被镜像特征 | 基准面 | 结果 |
+|---|---|---|---|
+| 旧（错） | mark=4 | mark=1 | 恒返回 None |
+| 新（对） | **mark=1** | **mark=2** | Δ = −4000.00 精确 |
+
+六种组合实测，只有 `特征 mark=1 + 面 mark=2` 能成。已修 `swlib_v2.mirror_checked`。
+
+**circular_pattern 的轴必须垂直于「孔心↔中心」连线**：
+
+孔开在 (X=25, Y=0)，圆柱轴沿 Z。三个轴 × count=6 实测：
+
+| 轴 | 交线 | 新增孔数 | 判定 |
+|---|---|---|---|
+| X | Top × Right | **+5.00** | ✓ 正确（count−1） |
+| Z | Front × Top | +1.34 | ✗ 孔在轴上，转不出新孔 |
+| Y | Front × Right | 返回 None | ✗ |
+
+★ 母特征必须传【切除特征名】——特征树里类型名是 **`ICE`**，不是 `Cut`/`Extrusion`。
+  传草图名必返回 None。
+
+### S14 ★ weldment_cut_list 是"读"不是"建"
+
+**现象**：旧版调 `InsertWeldmentCutList2(None)` 必返回 None。
+
+**根因**：那个方法是【插入切割清单表格】用的，不是生成切割清单。
+切割清单是 SW 建焊件时自动生成的 `CutListFolder`。
+
+**修法**（已落地）：
+```python
+V.weldment_cut_list(m)        # 返回 ['切割清单项目1', ...]，读特征树
+V.weldment_cut_list_table(m)  # 插表格（PILOT，位置不可控）
+```
+
+**但 CutListFolder 的生成条件不稳定**（PILOT 维持）：
+
+| 案例 | 尺寸 | bodies | CutListFolder |
+|---|---|---|---|
+| belt_actuator P14 | 700×300，角钢总长 2000mm | 4 | **2 项** |
+| capcheck 小框 | 200×120，总长 640mm | 4 | **0 项** |
+
+同样 4 实体、同配置，只有尺寸不同。结论：与型材总长/切分方式有关，
+不是纯 API 行为。**别把它当必然结果**。
+
+### S15 hole_wizard 在本机确实不可用（4 轮实测）
+
+按官方 VBA 示例复刻，试遍组合全部返回 None：
+
+| 变量 | 试过的值 |
+|---|---|
+| StandardIndex | 0~5 |
+| FastenerTypeIndex | 0~3 |
+| SSize | `""` `"10"` `"0.375"` `"M10"` `"M2"` `"#97"` |
+| hole_type | 2(Hole) 1(CounterSink) |
+| end_type | 0(Blind) 1(ThroughAll) |
+| 选择方式 | 草图点 / 面点 |
+
+**结论**：维持 PILOT。但封装**会抛明确 RuntimeError**，不是静默失败 —— 这点已保证。
+要打孔请用普通贯穿切除（`cut_checked`），已验证 0.000% 精确。

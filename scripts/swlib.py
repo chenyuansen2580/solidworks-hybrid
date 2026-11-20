@@ -354,19 +354,33 @@ def cut(m, sketch, through=True, depth_mm=None):
     return f
 
 
+def _select_edges(edges, mark=0):
+    """逐条选边，★ 首条 append=False 清空、其余 append=True 追加。
+
+    坑（2026-11-20 实测）：循环里一律 Select2(False,0) 会每次替换选择集，
+    最终只有最后一条边进选择集 —— 圆角/倒角看起来"成功"，实际只倒了一条。
+    P2 端盖实测：4 条外框边期望切 199.5，实际只切 50.0（= 100×0.5，正是 1 条边）。
+    """
+    m_sel = 0
+    ok = 0
+    for e in (edges or []):
+        try:
+            append = (ok > 0)
+            if wrap(e, "IEntity").Select2(append, mark):
+                ok += 1
+        except Exception:
+            continue
+    return ok
+
+
 def fillet(m, radius_mm, edges=None, options=195):
     """圆角。★ SW2022 是 7 参（GitHub 流传的 4 参是 SW2024+）。
 
     edges 为 None 时不会自动全选 —— 传 IEdge 列表，内部负责 wrap 成 IEntity 再选。
+    ★ 多条边必须逐条追加选中（首条 append=False，其余 True），否则只倒最后一条。
     """
     m.ClearSelection2(True)
-    n = 0
-    for e in (edges or []):
-        try:
-            if wrap(e, "IEntity").Select2(False, 0):
-                n += 1
-        except Exception:
-            continue
+    n = _select_edges(edges, mark=0)
     if n == 0:
         raise RuntimeError("圆角选择集为空（IEdge 不继承 IEntity，必须 wrap）")
     fm = wrap(m.FeatureManager, "IFeatureManager")
@@ -380,13 +394,14 @@ def fillet(m, radius_mm, edges=None, options=195):
 
 
 def chamfer(m, dist_mm, edges=None, angle_deg=45.0, options=1):
-    """倒角。角度用弧度。"""
+    """倒角。角度用弧度。
+
+    ★ 多条边必须逐条追加选中（首条 append=False，其余 True），否则只倒最后一条。
+    """
     m.ClearSelection2(True)
-    for e in (edges or []):
-        try:
-            wrap(e, "IEntity").Select2(False, 0)
-        except Exception:
-            continue
+    n = _select_edges(edges, mark=0)
+    if n == 0:
+        raise RuntimeError("倒角选择集为空")
     fm = wrap(m.FeatureManager, "IFeatureManager")
     f = fm.InsertFeatureChamfer(int(options), 1, dist_mm * MM,
                                 math.radians(angle_deg), 0.0, 0.0, 0.0, 0.0)

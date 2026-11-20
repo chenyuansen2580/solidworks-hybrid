@@ -17,7 +17,7 @@
 | 扫描 | **路径线段** | `Select2(append,4)` | **4** |
 | 抽壳 | 要删的面 | `IEntity.Select4(True,SelectData)` | 1 |
 | 圆周阵列 | 轴 / 母特征 | SelectByID2("AXIS") / Select2 | 1 / 4 |
-| 镜像 | 基准面 / 被镜像特征 | SelectByID2 / Select2 | 1 / 4 |
+| 镜像 | 被镜像特征 / 基准面 | Select2 / SelectByID2 | **1 / 2**（★2026-11-20 纠正，旧写 4/1 是错的） |
 | 圆角倒角 | 边 | `IEntity.Select2` | 0（本机）或 1（wzyn） |
 
 ★★ **选择集铁律**：`Select2(append, mark)` 优先；面/边 Select2 失效才退 `Select4(True, SelectData)`。
@@ -93,12 +93,21 @@ V.chamfer_checked(m, 3.0, edges=edges, angle_deg=45)  # 8 参，角度弧度
 - 坑：外层轮廓先倒圆角再 shell，壁厚更均匀、成功率更高。
 - 坑：倒角特征可能生成但体积没变 → 断言体积下降。
 
-## 六、阵列 pattern / 镜像 mirror（本机 verified / pilot）
+## 六、阵列 pattern / 镜像 mirror（均 verified）
 
 ```python
-V.circular_pattern_checked(m, "Boss1", "Axis1", 8)   # 轴 mark=1 母特征 mark=4
-# ★ FeatureCircularPattern5 第2参传【总角度 2π】+ EqualSpacing=True，不是 2π/n
-V.mirror_checked(m, "Boss1", "Right Plane")          # pilot：特征 mark=4 面 mark=1
+V.circular_pattern_checked(m, "切除-拉伸1", "基准轴1", 6)
+# 轴 mark=1、母特征 mark=4
+# ★ 母特征必须传【切除特征名】——特征树类型名是 ICE，不是 Cut/Extrusion
+# ★ 轴必须【垂直于「孔心↔中心」连线】：
+#     孔在 (X=25,Y=0) 圆柱轴沿 Z → 用 Top×Right（X 轴），count=6 新增 5 孔
+#     用 Front×Top（Z 轴）→ 孔在轴上，只新增 1.34 孔（错）
+# ★ count=N 实际新增 N-1 个孔（母特征算第 1 个）
+
+V.mirror_checked(m, "切除-拉伸1", "Right Plane")
+# ★★ 2026-11-20 纠正：被镜像特征 mark=1、基准面 mark=2
+#    旧版写 mark=4 / mark=1，六种组合实测恒返回 None
+#    修正后 Δ = −4000.00 mm³ 精确
 ```
 - 线性阵列（wzyn，SW2026 FeatureLinearPattern4 20参，本机未测）：
   母特征 mark=4、方向1边 mark=1、方向2边 mark=2。

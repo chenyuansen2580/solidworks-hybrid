@@ -507,10 +507,20 @@ def cut_checked(m, sketch, depth_mm=None, reverse=False, verbose=False):
 
     depth_mm:
       - None      → 双向贯穿（Sd=False + T1=T2=ThroughAll）
-      - 正数      → 单向盲切，沿草图法向
+      - 正数      → 单向盲切
     reverse:
-      - True      → 反向切除（FeatureCut4 的第 2 参 Flip）
-      - ★ 盲孔方向不对时（比如从底面切而非顶面），传 reverse=True 翻转
+      - False     → Dir=True，沿草图【正】法向切
+      - True      → Dir=False，沿草图【负】法向切
+
+    ★★ 2026-11-20 实测纠正（旧实现是错的）：
+      旧版把 reverse 传给 FeatureCut4 第 2 参 Flip —— 那是
+      【保留轮廓/切外侧】(flip side to cut)，不是反向！
+      症状：P5 滑台板 4 个沉孔少切 73319，正好 = 整块 − 4 个圆柱。
+      方向在第 3 参 Direction：
+        Dir=True  切正法向（Top Plane 草图 → +Y）
+        Dir=False 切负法向（Top Plane 草图 → −Y）
+      Dir=False 在负法向一侧【没有材料】时返回 None，这不是参数错误：
+        板向 +Y 拉伸、草图在 y=0 时负法向无材料，只能 Dir=True。
     """
     if not select_sketch(m, sketch, verbose=verbose):
         raise RuntimeError("cut: 草图选不中 %s" % sketch)
@@ -520,7 +530,7 @@ def cut_checked(m, sketch, depth_mm=None, reverse=False, verbose=False):
     else:
         sd, t1, t2, d1, d2 = True, 0, 0, depth_mm * MM, 0.0
     f = fm.FeatureCut4(
-        sd, bool(reverse), True, t1, t2, d1, d2,
+        sd, False, not bool(reverse), t1, t2, d1, d2,
         False, False, False, False, 0.0, 0.0,
         False, False, False, False,
         False, True, True,
@@ -632,8 +642,16 @@ def sweep_checked(m, profile, path, is_cut=False, twist_deg=0.0,
 
     ★ 选中方式（wzyn skill 2199★ + 本机实测）：
        profile 整张草图 mark=1，path 线段 mark=4（Select2 即可，无需 SELOBJGROUP）。
-    ★ 几何契约：轮廓所在平面必须【垂直】于路径起始方向，且轮廓过路径起点，
-       否则扫描静默返回 None（本机实测：路径 Front Plane 沿 X，轮廓 Right Plane）。
+    ★★ 几何契约（2026-11-20 本机实测，两个条件缺一即静默返回 None）：
+       1) 轮廓所在平面必须【垂直】于路径起点处的切线方向
+       2) **轮廓圆心必须精确落在路径起点坐标上**（不是"靠近"，是重合）
+          实测：跑道形路径起点 (0,-16)，轮廓圆心放 (0,-16) → OK vol=7848.4
+                放 (0,0) → None。这一条比 1) 更常被忽略。
+    ★ 闭环路径也支持（跑道形 1111mm 闭环扫描成功，dev −0.09%）；
+      官方文档称闭环 twist 须为整圈倍数，但实测 twist=0 亦可通过。
+    ★ CreateArc2 参数单位是【米】，而 swlib.line 内部已乘 MM ——
+      手写 CreateArc2 时必须自己 ×0.001，否则圆弧画到 480 米外，
+      症状：草图看似闭合、端点读数是 480000 而非 480，拉伸/扫描全失败。
     path 可以是草图名（取其所有草图线段），也可以是 IEdge/ISketchSegment 列表。
     """
     if not select_sketch(m, profile, mark=1, verbose=verbose):
@@ -670,7 +688,12 @@ def sweep_checked(m, profile, path, is_cut=False, twist_deg=0.0,
             math.radians(twist_deg), True, False, 0.0, 0)
     m.ClearSelection2(True)
     if f is None:
-        raise RuntimeError("sweep 返回 None（轮廓/路径不合法或不相接）")
+        raise RuntimeError(
+            "sweep 返回 None。按顺序查：\n"
+            "  1) 轮廓圆心是否【精确落在路径起点】上？（最常见的坑）\n"
+            "  2) 轮廓平面是否垂直于路径起点切线方向？\n"
+            "  3) 手写 CreateArc2 是否漏乘 0.001（米）？\n"
+            "  4) 路径线段是否全部选中（mark=4，逐段 append=True）？")
     return f
 
 
@@ -739,11 +762,16 @@ def chamfer_checked(m, dist_mm, edges=None, angle_deg=45.0, options=1):
 
 
 def face_cylinder(m, index=0):
-    """返回零件里第 index 个圆柱面（IFace2）；找不到返回 None。
+    """返回【零件】里第 index 个圆柱面（IFace2）；找不到返回 None。
 
     ★★ 坑：`ISurface.IsCylinder` / `IsPlane` 在早绑定下是**属性**，
       写成 `IsCylinder()` 会报 `'bool' object is not callable`。
       一律用 getattr 读属性。
+
+    ★ 与 faces_of() 的分工：
+      - 本函数吃【零件】(IPartDoc)，只返回圆柱面，按序号取（给阵列/镜像找轴用）
+      - faces_of() 吃【装配组件】(IComponent2)，返回全部面 + bbox/法向/面积
+      装配里挑面请用 faces_of + plane_at / cyl_of，别用本函数。
     """
     try:
         body = wrap(wrap(m, "IPartDoc").GetBodies2(0, False)[0], "IBody2")
@@ -828,19 +856,25 @@ def circular_pattern_checked(m, feature_name, axis_name, count, total_angle_deg=
 
 
 def mirror_checked(m, feature_name, plane_name):
-    """镜像特征（wzyn skill mark 体系）：被镜像特征 mark=4，基准面 mark=1。"""
+    """镜像特征（InsertMirrorFeature2，5 参）。
+
+    ★★ 2026-11-20 实测纠正 mark 体系（旧版写反了，恒返回 None）：
+      被镜像特征 mark=**1**，基准面 mark=**2**
+      （旧版写 mark=4 / mark=1，六种组合里只有 1/2 能成功）
+      验证：矩形板镜像一个 20×20×10 槽 → Δ = −4000.00 mm³，精确。
+    """
     m.ClearSelection2(True)
     fe = feat_by_name(m, feature_name)
-    if fe is None or not _select_obj(fe, False, 4):
-        raise RuntimeError("镜像：被镜像特征选不中 %s (mark=4)" % feature_name)
-    ok = m.Extension.SelectByID2(plane_name, "PLANE", 0, 0, 0, True, 1, None, 0)
+    if fe is None or not _select_obj(fe, False, 1):
+        raise RuntimeError("镜像：被镜像特征选不中 %s (mark=1)" % feature_name)
+    ok = m.Extension.SelectByID2(plane_name, "PLANE", 0, 0, 0, True, 2, None, 0)
     if not ok:
         alias = {"Front Plane": "前视基准面", "Top Plane": "上视基准面",
                  "Right Plane": "右视基准面"}.get(plane_name)
         if alias:
-            ok = m.Extension.SelectByID2(alias, "PLANE", 0, 0, 0, True, 1, None, 0)
+            ok = m.Extension.SelectByID2(alias, "PLANE", 0, 0, 0, True, 2, None, 0)
     if not ok:
-        raise RuntimeError("镜像：基准面选不中 %s (mark=1)" % plane_name)
+        raise RuntimeError("镜像：基准面选不中 %s (mark=2)" % plane_name)
     fm = wrap(m.FeatureManager, "IFeatureManager")
     f = fm.InsertMirrorFeature2(False, False, False, False, 0)
     m.ClearSelection2(True)
@@ -1305,11 +1339,35 @@ def find_weldment_profiles(limit=8):
 
 
 def weldment_cut_list(m):
-    """插入焊件切割清单（InsertWeldmentCutList2，1 参）。"""
+    """读焊件切割清单（CutListFolder 列表），返回 [(名称, 项目数)]。
+
+    ★★ 2026-11-20 实测纠正：旧版调 `InsertWeldmentCutList2(None)` 必返回 None。
+      那个方法是【插入切割清单表格】用的，不是生成切割清单。
+      切割清单是 SW 建焊件时自动生成的，但 **内存中不出现**，
+      必须【存盘 → 关闭 → 重开】后才在特征树里看到 CutListFolder。
+
+    用法：
+        m = V.new_part(sw); ...建焊件...
+        V.save_checked(m, path)
+        V.close_doc(sw, m)
+        m2 = V.open_doc(sw, path, doc_type=1)
+        print(V.weldment_cut_list(m2))    # [('切割清单项目1', ...), ...]
+    """
+    out = []
+    for nm, tp in feature_tree(m):
+        if tp == "CutListFolder":
+            out.append(nm)
+    return out
+
+
+def weldment_cut_list_table(m):
+    """在工程图里插入焊件切割清单表格（InsertWeldmentCutList2）。
+
+    ★ 与 weldment_cut_list() 区别：本函数插【表格】，需要焊件已存盘重开。
+      返回 Feature 或 None（表格位置不可控，见 pitfalls 已知限制）。
+    """
     fm = wrap(m.FeatureManager, "IFeatureManager")
     f = fm.InsertWeldmentCutList2(None)
-    if f is None:
-        raise RuntimeError("InsertWeldmentCutList2 返回 None（非焊件零件）")
     return f
 
 
@@ -1573,40 +1631,49 @@ def set_component_color(comp, rgb, config_opt=1, finish=None):
 
 
 def verify(m, volume=None, bbox=None, bodies=None, vol_tol=0.005, bbox_tol=0.5, tag=""):
-    """三重断言：体积（材质多少）、bbox（在哪）、特征树/实体数（留了什么）。
+    """三重断言：体积（材质多少）、bbox（在哪）、实体数（留了什么）。
 
-    volume  : 期望体积 mm³（解析值），相对偏差 < vol_tol
-    bbox    : 期望 (xmin,ymin,zmin,xmax,ymax,zmax) mm
-    bodies  : 期望实体数
-    返回 dict 结果，失败抛 AssertionError。
+    volume  : 期望体积 mm³，按【相对偏差】判，阈值 vol_tol（0.005 = 0.5%）
+    bbox    : 期望 (xmin,ymin,zmin,xmax,ymax,zmax) mm，按【绝对偏差】判，
+              阈值 bbox_tol（单位 mm，默认 0.5mm）
+    bodies  : 期望实体数，精确相等
+    返回 dict 结果；任一项超出阈值抛 AssertionError。
+
+    ★ 体积是相对、bbox 是绝对 —— 这两个阈值单位不同，别混用。
     """
     rep = {"tag": tag, "checks": []}
 
-    def ck(name, got, want, tol, rel=False):
+    def ck(name, got, want, tol, rel):
         if got is None or want is None:
             rep["checks"].append((name, "SKIP", got, want))
             return
-        dev = abs(got - want) / (want if rel else 1.0)
-        ok = dev <= (tol if rel else tol)
-        rep["checks"].append((name, "PASS" if ok else "FAIL", round(got, 4), round(want, 4)))
+        if rel:
+            dev = abs(got - want) / abs(want) if want else abs(got)
+            ok = dev <= tol
+        else:
+            dev = abs(got - want)
+            ok = dev <= tol
+        rep["checks"].append(
+            (name, "PASS" if ok else "FAIL", round(got, 4), round(want, 4)))
         if not ok:
-            raise AssertionError("%s %s: got=%s want=%s dev=%.6f" % (tag, name, got, want, dev))
+            raise AssertionError(
+                "%s %s: got=%s want=%s dev=%.6f (tol=%s%s)"
+                % (tag, name, got, want, dev, tol, "%" if rel else "mm"))
 
     if volume is not None:
-        ck("volume", L.vol(m), volume, vol_tol, rel=True)
-    bb = L.bbox6(m)
+        ck("volume", L.vol(m), volume, vol_tol, True)
     if bbox is not None:
+        bb = L.bbox6(m)
         for i in range(6):
-            ck("bbox[%d]" % i, bb[i], bbox[i], bbox_tol)
+            ck("bbox[%d]" % i, bb[i], bbox[i], bbox_tol, False)
     if bodies is not None:
         try:
             n = len(wrap(m, "IPartDoc").GetBodies2(0, False) or [])
         except Exception:
             n = -1
-        ck("bodies", n, bodies, 0)
+        ck("bodies", n, bodies, 0, False)
     for name, status, got, want in rep["checks"]:
-        print("  [%s] %-14s %s=%s %s=%s" %
-              (status, name, "got", got, "want", want))
+        print("  [%s] %-14s got=%-12s want=%s" % (status, name, got, want))
     return rep
 
 
@@ -1625,7 +1692,7 @@ CAPABILITIES = {
     "part.cut_blind": (VERIFIED, "盲孔切除"),
     "sketch.arc": (VERIFIED, "IModelDoc2.CreateArc2，弧先画线后画"),
     "sketch.spline": (VERIFIED, "CreateSpline + 去重 tol=1e-5"),
-    "pattern.circular": (VERIFIED, "FeatureCircularPattern5，mark1=轴 mark4=特征"),
+    "pattern.circular": (VERIFIED, "FeatureCircularPattern5，mark1=轴 mark4=特征；2026-11-20 实测 count=2/4/6 分别新增 1/3/5 孔，体积精确；★ 轴必须过孔心所在轴线"),
     "part.fillet": (VERIFIED, "FeatureFillet 7 参；收缩圆角 dev 0.0000%"),
     "part.chamfer": (VERIFIED, "InsertFeatureChamfer 8 参；体积下降已验"),
     "part.revolve": (VERIFIED, "FeatureRevolve2，dev 0.0000%（中心线必需）"),
@@ -1633,16 +1700,16 @@ CAPABILITIES = {
     "part.sweep": (VERIFIED, "InsertProtrusionSwept4，路径 Select2(mark=4)，dev 0.0000%"),
     "part.shell": (VERIFIED, "IModelDoc2.InsertFeatureShell，面 Select4(mark=1)，dev 0.0000%"),
     "ref.offset_plane": (VERIFIED, "InsertRefPlane(8=Distance)，放样平行截面用"),
-    "part.mirror": (PILOT, "InsertMirrorFeature2，特征 mark=4 面 mark=1（未实测）"),
+    "part.mirror": (VERIFIED, "InsertMirrorFeature2 5 参；★特征 mark=1 面 mark=2（旧文档写反）；实测 Δ=-4000.00 精确"),
     "part.draft_equiv": (VERIFIED, "梯形拉伸/圆台旋转等效拔模，dev 0.0000%/-0.07%"),
     "part.sheetmetal_base_flange": (VERIFIED, "FeatureData 路线(CreateDefinition 34)，dev 0.0000%"),
-    "part.hole_wizard": (PILOT, "HoleWizard5 27 参，StandardIndex 须热身后有效"),
+    "part.hole_wizard": (PILOT, "HoleWizard5 27 参；2026-11-20 按官方 VBA 复刻试遍 Standard/Fastener/SSize 组合全部 None，本机不可用，改普通切除"),
     "surface.extrude": (VERIFIED, "FeatureExtruRefSurface 21 参，判据靠 body_counts"),
     "surface.planar": (VERIFIED, "IModelDoc2.InsertPlanarRefSurface（不在 FeatureManager）"),
-    "surface.revolve": (PILOT, "InsertRevolvedRefSurface 4 参，未单独实测"),
+    "surface.revolve": (VERIFIED, "InsertRevolvedRefSurface 4 参；实测 solid=0 sheet=1"),
     "surface.thicken": (NOT_IMPLEMENTED, "ThickenSheet 本机恒返回 None（已验证所有调用方式）"),
     "weldment.structural": (VERIFIED, "InsertStructuralWeldment5 + 组数组，vol 333751 实测"),
-    "weldment.cut_list": (PILOT, "InsertWeldmentCutList2，未实测"),
+    "weldment.cut_list": (PILOT, "读 CutListFolder；★生成条件与型材总长有关，同样 4 实体 700x300 得 2 项、200x120 得 0 项"),
     "motion.study": (VERIFIED, "CreateMotionStudy + Calculate 实测通过（含中文算例名）"),
     "motion.results": (PILOT, "GetLinearVelocity/GetAngularVelocity，未单独实测"),
     "motion.avi": (PILOT, "SaveToAVI 依赖编解码器，未实测"),
@@ -1665,7 +1732,7 @@ CAPABILITIES = {
     "gear.full_ring": (VERIFIED, "gearring.full_ring 整圈拼接，2761 点 r_min=rf r_max=ra"),
 
     # —— pilot：能用但边界未摸清
-    "asm.mate.plane_coincident": (PILOT, "能建配合，但会移动零件，必须做位姿比对"),
+    "asm.mate.plane_coincident": (VERIFIED, "★先 fix_all 再建，漂移恒 0.00mm；不固定则零件被拉散（实测 135mm）"),
     "asm.mate.axis_concentric": (PILOT, "本机实测不建配合，改用基准面"),
     "appearance.render": (PILOT, "需补光；像素统计验收"),
     "appearance.display_color": (NOT_IMPLEMENTED,
@@ -1822,6 +1889,244 @@ def count_mates(m):
                 s = wrap(s, "IFeature").GetNextSubFeature()
         f = fe.GetNextFeature()
     return n
+
+
+# ---------------------------------------------------------------- 装配几何（2026-11-20 实战新增）
+# 这一组函数在 14 零件同步带模组实战里手写了 5 遍，全部本机实测。
+
+def faces_of(comp):
+    """枚举组件所有面，返回统一结构，供 plane_at / cyl_of 挑面。
+
+    返回 [{f: IFace2, plane: bool, cyl: bool,
+           box: [x0,y0,z0,x1,y1,z1] mm, dims: [dx,dy,dz] mm,
+           n: (nx,ny,nz) 或 None, area: mm²}]
+
+    ★★ IFace2.GetBox() 与 ISurface.PlaneParams 的法向都是【零件局部坐标】，
+       不是装配世界坐标。P6 导轨世界 x=−200..300，面 box 却显示 −250..250。
+       所以挑面要用零件自身尺寸给值。
+    """
+    out = []
+    try:
+        b = wrap(comp, "IComponent2").GetBody()
+        if b is None:
+            return out
+        for f in wrap(b, "IBody2").GetFaces():
+            ff = wrap(f, "IFace2")
+            surf = wrap(ff.GetSurface(), "ISurface")
+            is_plane = bool(com_member(surf, "IsPlane"))
+            is_cyl = bool(com_member(surf, "IsCylinder"))
+            box = [round(x * 1000.0, 2) for x in ff.GetBox()]
+            dims = [round(box[3] - box[0], 2),
+                    round(box[4] - box[1], 2),
+                    round(box[5] - box[2], 2)]
+            n = None
+            if is_plane:
+                try:
+                    n = tuple(round(x, 3) for x in surf.PlaneParams[0:3])
+                except Exception:
+                    pass
+            try:
+                area = ff.GetArea() * 1e6
+            except Exception:
+                area = 0.0
+            out.append(dict(f=ff, plane=is_plane, cyl=is_cyl,
+                            box=box, dims=dims, n=n, area=area))
+    except Exception:
+        pass
+    return out
+
+
+_AXIS_I = {"x": 0, "y": 1, "z": 2}
+
+
+def plane_at(faces, axis, sign, coord, tol=0.6):
+    """按【局部坐标】挑平面：沿 axis 的坐标 ≈ coord，法向沿 ±axis。
+
+    faces 来自 faces_of()。返回 IFace2 或 None。
+    用法：plane_at(F["rail"], "y", 1.0, 0.0)   # 导轨底面（局部 y=0，法向 +Y）
+
+    ★★ 2026-11-20 实测：`ISurface.PlaneParams` 的法向【不保证朝外】。
+      同一零件的顶面报 +Y、底面也报 +Y（朝内），换个零件又反过来。
+      所以：
+        - sign 传 1.0 / -1.0 → 按该符号匹配（要求你知道朝向）
+        - **sign 传 None → 只校验法向沿该轴，不校验符号**（最稳，推荐）
+      e2e 套件实测：立板底面必须用 sign=None 才挑得到。
+    """
+    ai = _AXIS_I[axis]
+    for d in faces:
+        if not d["plane"] or d["n"] is None:
+            continue
+        if abs(abs(d["n"][ai]) - 1.0) > 0.02:
+            continue                      # 法向不沿该轴
+        if sign is not None and abs(d["n"][ai] - sign) > 0.02:
+            continue
+        if coord is None:
+            return d["f"]
+        if (abs(d["box"][ai] - coord) < tol
+                or abs(d["box"][ai + 3] - coord) < tol):
+            return d["f"]
+    return None
+
+
+def cyl_of(faces, dia, tol=1.0, min_area=200.0):
+    """挑圆柱面：恰好两维 ≈ 直径，取面积最大的（排除减重孔）。
+
+    ★ 只判"至少两维接近"会误选减重孔 —— P4 带轮 Ø6 减重孔与 Ø12 轴孔
+      在 dims 上都含 15（轴向），实测会挑错。改为必须【恰好两维】匹配，
+      再按面积排序：轴孔贯通面积恒大于减重孔。
+    """
+    cands = []
+    for d in faces:
+        if not d["cyl"]:
+            continue
+        if sum(1 for q in d["dims"] if abs(q - dia) < tol) != 2:
+            continue
+        if d["area"] < min_area:
+            continue
+        cands.append(d)
+    if not cands:
+        return None
+    cands.sort(key=lambda d: -d["area"])
+    return cands[0]["f"]
+
+
+def all_boxes(asm):
+    """{实例名: [x0,y0,z0,x1,y1,z1] mm} —— 漂移检测的基础。
+
+    ★ 与 snapshot() 等价，但 snapshot 有 GetBox 3 级回退（固定组件偶发返回 None）。
+      这里直接复用 snapshot，避免两套实现漂移。返回结构一致。
+    """
+    return snapshot(asm)
+
+
+def max_drift(before, after):
+    """两组 all_boxes 的最大坐标差（mm）。配合后用它判零件有没有被拉走。
+
+    ★ 2026-11-20 实测：不固定组件时加一个平面重合配合，
+      p4_pulley 会从 Y −33.9..33.9 漂到 12.7..101.3，总漂移 135 mm。
+      固定后漂移恒 0.00 mm。漂移 >1mm 即判该配合与摆放位置不一致。
+
+    ★ 与 diff_snapshot() 的分工：diff_snapshot 返回逐组件明细列表，
+      max_drift 只返回全局最大值（判阈值用）。
+    """
+    worst = 0.0
+    for nm, d in diff_snapshot(before, after):
+        if d is not None and d > worst:
+            worst = d
+    return worst
+
+
+def place_to(sw, comp, R, target_min, iters=5, tol=0.05):
+    """迭代把组件 bbox 最小角移到 target_min（mm），返回最终 bbox。
+
+    ★★ V.place() 设的是【组件原点】，不是 bbox 中心。非对称零件（焊件框、
+       电机板）按目标坐标手算必偏。这里迭代 3~5 次收敛到 0.05mm。
+
+    R 是 3×3 旋转矩阵（用 rot_z / rot_x / rot_y 造）。
+    """
+    place(sw, comp, R, (0, 0, 0))
+    t = [0.0, 0.0, 0.0]
+    for _ in range(iters):
+        b = [x * 1000.0 for x in comp.GetBox(0, False)]
+        d = [target_min[i] - b[i] for i in range(3)]
+        if max(abs(x) for x in d) < tol:
+            break
+        t = [t[i] + d[i] for i in range(3)]
+        place(sw, comp, R, t)
+    return [round(x * 1000.0, 2) for x in comp.GetBox(0, False)]
+
+
+def rot_x(deg):
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((1, 0, 0), (0, c, -s), (0, s, c))
+
+
+def rot_y(deg):
+    c, s = math.cos(math.radians(deg)), math.sin(math.radians(deg))
+    return ((c, 0, s), (0, 1, 0), (-s, 0, c))
+
+
+def fix_all(asm):
+    """固定装配体全部组件，返回成功个数。
+
+    ★★ 2026-11-20 实测：不固定组件时，单个平面重合配合会让零件在其余
+       5 个自由度上乱跑，整个装配散架。必须【先全部 Fix 再加配合】。
+       FixComponent 在 IAssemblyDoc 上，需先选中；判据用 IsFixed 属性
+       （FixComponent 恒返回 None）。
+    """
+    doc = wrap(asm, "IModelDoc2")
+    ia = wrap(asm, "IAssemblyDoc")
+    n = 0
+    for k, c in comps(asm).items():
+        try:
+            if not com_member(c, "IsFixed"):
+                doc.ClearSelection2(True)
+                wrap(c, "IComponent2").Select2(False, 0)
+                ia.FixComponent()
+                doc.ClearSelection2(True)
+            if com_member(c, "IsFixed"):
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def last_refplane_name(m):
+    """取特征树里最后一个 RefPlane 的名称。
+
+    ★ offset_plane() 返回的是 CDispatch（特征对象），不能直接当基准面名用。
+      建完偏移面后调本函数取名字，再传给 new_sketch。
+    """
+    last = None
+    for nm, tp in feature_tree(m):
+        if tp == "RefPlane":
+            last = nm
+    return last
+
+
+def offset_plane_named(m, base_plane, distance_mm, name=None):
+    """建偏移基准面并返回其【名称】（offset_plane 的实用封装）。
+
+    用法：pname = V.offset_plane_named(m, "Top Plane", 60)
+          V.L.new_sketch(m, pname)
+    """
+    offset_plane(m, base_plane, distance_mm, name=name)
+    nm = name or last_refplane_name(m)
+    if not nm:
+        raise RuntimeError("offset_plane_named: 建了偏移面但取不到名称")
+    return nm
+
+
+def drawing_view(drawing, model_path, view="*等轴测", x=0.15, y=0.13, options=0):
+    """在工程图插入模型视图，返回 IView 或 None。
+
+    ★★ 三条铁律（2026-11-20 实测）：
+      1. 本机 SW 是【中文界面】，视图名必须中文：
+         *等轴测 / *前视 / *上视 / *右视
+         英文 *Isometric / *Front 一律返回 False。
+      2. 方法在 **IDrawingDoc** 上，不在 IModelDoc2
+         （IModelDoc2 上 getattr 直接 AttributeError）。
+      3. 装配体必须先在会话里打开并激活，否则返回 False。
+    """
+    idd = wrap(drawing, "IDrawingDoc")
+    try:
+        r = idd.CreateDrawViewFromModelView3(model_path, view, x, y, options)
+    except Exception:
+        return None
+    if r in (None, False):
+        return None
+    try:
+        return wrap(r, "IView")
+    except Exception:
+        return r
+
+
+def view_name_of(view):
+    """读 IView 的名称（"工程图视图1"），用于验证视图真插进去了。"""
+    try:
+        return com_member(view, "GetName2")
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------- 草图增强
@@ -2082,15 +2387,35 @@ def rot_z(deg):
 
 
 def check_interference(asm):
-    """返回 (None,None)=无干涉。"""
+    """干涉检查。返回 (None, None) = 无干涉。
+
+    ★★ 2026-11-20 实测纠正：`ToolsCheckInterference2` 在 **IAssemblyDoc** 上。
+      旧版直接 `asm.ToolsCheckInterference2(...)` —— 传进来的若是 IModelDoc2
+      就必抛 −2147352571「类型不匹配」，被 except 包成 ("ERROR", ...)，
+      于是**误判成"有干涉"**。现在强制先 wrap 成 IAssemblyDoc。
+    """
     try:
-        return asm.ToolsCheckInterference2(1, None, False)
+        ia = wrap(asm, "IAssemblyDoc")
     except Exception:
-        # 动态层下 GetInterferences 可能是属性，回退探测
+        ia = asm
+    last = None
+    for num in (1, 0):
         try:
-            return asm.ToolsCheckInterference2(0, None, False)
+            return ia.ToolsCheckInterference2(num, None, False)
         except Exception as e:
-            return ("ERROR", str(e)[:80])
+            last = e
+    return ("ERROR", str(last)[:80] if last else "ToolsCheckInterference2 unavailable")
+
+
+def interference_ok(asm):
+    """干涉检查的布尔版：返回 (ok, raw)。ok=True 表示无干涉。
+
+    用法：
+        ok, raw = V.interference_ok(asm)
+        assert ok, "有干涉: %s" % (raw,)
+    """
+    r = check_interference(asm)
+    return (r == (None, None)), r
 
 
 # ---------------------------------------------------------------- 底层透传
