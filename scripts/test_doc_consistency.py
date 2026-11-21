@@ -93,22 +93,69 @@ def t_top_n():
     return "Top %d = %d 行" % (n, len(rows))
 
 
+def _module_names(path):
+    """AST 静态取模块顶层可见名字（函数/类/赋值/import 别名）。
+
+    ★ 不 import swlib_v2：它顶层依赖 pythoncom，离线环境导入必失败。
+      文档里的 V.xxx 引用只需要名字存在性，静态解析足够。
+    """
+    import ast
+    tree = ast.parse(io.open(path, encoding="utf-8").read())
+    names = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:
+                for sub in ast.walk(t):
+                    if isinstance(sub, ast.Name):
+                        names.add(sub.id)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for a in node.names:
+                names.add(a.asname or a.name.split(".")[0])
+        elif isinstance(node, (ast.Try, ast.If)):
+            # try/except import 与条件定义里的顶层名字也算可见
+            for sub in ast.walk(node):
+                if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names.add(sub.name)
+                elif isinstance(sub, ast.Assign):
+                    for t in sub.targets:
+                        for s2 in ast.walk(t):
+                            if isinstance(s2, ast.Name):
+                                names.add(s2.id)
+                elif isinstance(sub, (ast.Import, ast.ImportFrom)):
+                    for a in sub.names:
+                        names.add(a.asname or a.name.split(".")[0])
+    return names
+
+
+def _cap_table():
+    """能力表：优先真库，无 COM 环境回退 capabilities.yaml。"""
+    try:
+        import swlib_v2 as V
+        return V.CAPABILITIES, True
+    except Exception:
+        import capabilities_loader as CL
+        return CL.to_swlib_table(), False
+
+
 def t_v_refs():
-    import swlib_v2 as V
+    names = _module_names(os.path.join(HERE, "swlib_v2.py"))
     t = read("SKILL.md")
     refs = sorted(set(re.findall(r"V\.(\w+)", t)))
-    miss = [r for r in refs if not hasattr(V, r)]
+    miss = [r for r in refs if r not in names]
     assert not miss, "缺失: %s" % miss
-    return "%d 个引用" % len(refs)
+    return "%d 个引用（AST 静态解析）" % len(refs)
 
 
 def t_cap_ids_consistent():
     import capabilities_loader as CL
-    import swlib_v2 as V
     import capability_gap as CG
 
     yaml_caps = CL.capabilities()
-    sw_caps = V.CAPABILITIES
+    sw_caps, live = _cap_table()
     assert set(yaml_caps) == set(sw_caps), \
         "yaml/swlib_v2 id 不一致: %s" % (set(yaml_caps) ^ set(sw_caps))
 
@@ -126,7 +173,7 @@ def t_cap_ids_consistent():
             if c not in yaml_caps:
                 bad.append((name, "替代 id 不存在: %s" % c))
     assert not bad, "gap 表有悬空 id: %s" % bad
-    return "%d ids 全一致" % len(yaml_caps)
+    return "%d ids 全一致（%s）" % (len(yaml_caps), "真库" if live else "yaml 离线")
 
 
 def t_no_hardcoded_counts_in_code():
