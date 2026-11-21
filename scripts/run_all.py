@@ -14,6 +14,8 @@
 
 ★ 优化2：静态层不启动 SW，0.7 秒拦掉 80% 的破坏
   （语法错误、函数被删、能力表被改坏、门禁逻辑回归）。
+  静态层不需 Windows / pywin32：能力表回退 capabilities.yaml，
+  需真机的用例标 SKIP。
 
 ★ 优化3：增量检测。源文件 + 本脚本都没变、且上次全过 → 直接跳过。
   强制重跑用 --force。
@@ -45,11 +47,12 @@ SW_SUITES = [
 ]
 
 STATIC_SUITES = [
-    ("gate", "verify_gate.py", "GATE SELFTEST PASS", "四级验证门禁降级逻辑"),
-    ("freshness", "test_freshness.py", "FRESHNESS PASS", "交付新鲜度：旧文件不能冒充本轮成果"),
-    ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测"),
-    ("docs", "test_doc_consistency.py", "DOC CONSISTENCY PASS", "单一真相源：数字/引用/id 自洽"),
-    ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "8 个标准真机工作流验收"),
+    ("gate", "verify_gate.py", "GATE SELFTEST PASS", "四级验证门禁降级逻辑", ()),
+    ("freshness", "test_freshness.py", "FRESHNESS PASS", "交付新鲜度：旧文件不能冒充本轮成果", ()),
+    ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测", ()),
+    ("docs", "test_doc_consistency.py", "DOC CONSISTENCY PASS", "单一真相源：数字/引用/id 自洽", ()),
+    ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "8 个标准真机工作流验收", ()),
+    ("trace", "test_exec_trace.py", "EXEC TRACE PASS", "执行 Trace：留痕/失败定位/序列化（离线部分）", ("--offline",)),
 ]
 
 
@@ -71,12 +74,12 @@ def sw_running():
         return False
 
 
-def run_script(script, marker, timeout=600):
+def run_script(script, marker, timeout=600, args=()):
     path = os.path.join(HERE, script)
     if not os.path.exists(path):
         return False, "脚本不存在"
     try:
-        r = subprocess.run([PY, path], capture_output=True, text=True,
+        r = subprocess.run([PY, path] + list(args), capture_output=True, text=True,
                            encoding="utf-8", errors="replace",
                            timeout=timeout, cwd=HERE)
     except subprocess.TimeoutExpired:
@@ -112,7 +115,7 @@ def unchanged_since_pass():
 
 # ---------------- 静态层 ----------------
 def layer_static():
-    """编译 + 导入 + 能力表 + 门禁自测。0.7 秒完成。"""
+    """编译 + 能力表 + 门禁自测。0.7 秒完成，不需 SW / pywin32。"""
     ok = True
     py_files = [os.path.join(HERE, f) for f in os.listdir(HERE)
                 if f.endswith(".py")]
@@ -132,28 +135,39 @@ def layer_static():
 
     try:
         sys.path.insert(0, HERE)
-        import io
-        import contextlib
-        import swlib_v2 as V
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rep = V.capability_report()
-        nv = len(rep.get("verified", []))
-        np_ = len(rep.get("pilot", []))
-        nn = len(rep.get("not_implemented", []))
+        # ★ 离线可用：无 pywin32 / 非 Windows 时不 import swlib_v2（顶层要 pythoncom），
+        #   直接读 capabilities.yaml 统计等级，并注明数据来源。
+        src = "swlib_v2"
+        try:
+            import io
+            import contextlib
+            import swlib_v2 as V
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rep = V.capability_report()
+            nv = len(rep.get("verified", []))
+            np_ = len(rep.get("pilot", []))
+            nn = len(rep.get("not_implemented", []))
+        except ImportError:
+            import capabilities_loader as CL
+            bl = CL.by_level()
+            nv = len(bl.get(CL.VERIFIED, []))
+            np_ = len(bl.get(CL.PILOT, []))
+            nn = len(bl.get(CL.NOT_IMPLEMENTED, []))
+            src = "yaml 离线"
         if nv < 32:
-            print("  [import]   FAIL verified 从 35 掉到 %d！" % nv)
+            print("  [caps]     FAIL verified 从 38 掉到 %d！" % nv)
             ok = False
         else:
-            print("  [import]   PASS (%d verified / %d pilot / %d not_impl)"
-                  % (nv, np_, nn))
+            print("  [caps]     PASS (%d verified / %d pilot / %d not_impl，源=%s)"
+                  % (nv, np_, nn, src))
     except Exception as e:
-        print("  [import]   FAIL %s" % str(e)[:120])
+        print("  [caps]     FAIL %s" % str(e)[:120])
         ok = False
 
     ok2 = True
-    for name, script, marker, desc in STATIC_SUITES:
-        ok_s, err = run_script(script, marker, timeout=120)
+    for name, script, marker, desc, sargs in STATIC_SUITES:
+        ok_s, err = run_script(script, marker, timeout=120, args=sargs)
         print("  [%-10s] %s  %s%s"
               % (name, "PASS" if ok_s else "FAIL", desc,
                  "" if ok_s else "  <- " + err))
@@ -249,4 +263,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

@@ -55,16 +55,20 @@ V.save_checked(m, r"C:\temp\cyl.SLDPRT")
 ## 自检
 
 ```bash
-python scripts/run_all.py --static   # 约 1 秒，不开 SW ★ 每次改完先跑（7 项）
-python scripts/run_all.py --quick    # 约 10 分钟，日常够用（7 静态 + 5 SW）
-python scripts/run_all.py            # 约 14 分钟，全量（7 静态 + 11 SW）
+python scripts/run_all.py --static   # 约 1 秒，不开 SW ★ 每次改完先跑（8 项）
+python scripts/run_all.py --quick    # 约 10 分钟，日常够用（8 静态 + 5 SW）
+python scripts/run_all.py            # 约 14 分钟，全量（8 静态 + 11 SW）
 python scripts/run_all.py --force    # 强制重跑
 ```
 
 | 层 | 套件 |
 |---|---|
-| 静态 | compile / import / gate / freshness / gap / docs / golden |
-| SW | smoke / features / draft / sheetmetal / props / surface / motion / assembly / doctest / capcheck / trace |
+| 静态 | compile / caps / gate / freshness / gap / docs / golden / trace(离线部分) |
+| SW | smoke / features / draft / sheetmetal / props / surface / motion / assembly / doctest / capcheck / trace(含真机建模) |
+
+静态层**不需要 Windows、不需要 pywin32、不开 SW**：能力表在 import 失败时回退
+`capabilities.yaml`（`capabilities_loader` 自带 mini 解析器），文档引用用 AST 静态解析，
+需真机的用例标 SKIP 而不计失败。因此 Linux / CI 上也能拿到完整的静态回归结论。
 
 ## 子技能
 
