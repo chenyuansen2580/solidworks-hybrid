@@ -1,38 +1,38 @@
 # SolidWorks Modeling Skill
 
-本机 SolidWorks 2022 全流程建模技能：需求规划 → 齿廓/变形数学 → COM 建模 → 装配配合 → 运动仿真 → 校核 → 出图。
+本机 SolidWorks 2022 全流程建模技能：需求规划 → 数学/齿廓 → COM 建模 → 装配配合 → 运动仿真 → 校核出图。
 
 > 所有 API 签名、接口归属、参数顺序均基于 **SOLIDWORKS 2022 SP5 (30.5.0.0049)** 本机类型库实测。
-> **不照抄 GitHub 上针对 SW2024/2026 的结论** —— 版本差异会直接导致失败。
+> **不照抄 GitHub 上针对 SW2024/2026 的结论**。
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![SolidWorks](https://img.shields.io/badge/SolidWorks-2022%20SP5-blue.svg)](SKILL.md)
 
 ## 环境要求
 
 | 项 | 要求 | 说明 |
 |---|---|---|
-| 系统 | Windows 10/11 x64 | 走 COM 自动化，跨平台不可用 |
-| CAD | SOLIDWORKS 2022 SP5（30.5.0.0049） | ProgID `SldWorks.Application.30`；换版本需改 `connect()` 的 version |
-| Python | 3.12 x64 + **pywin32** | `pip install pywin32`；3.13 本机实测同样可跑，早绑定缓存目录随版本变化 |
-| 选装 | numpy、shapely | **仅** `scripts/check_harmonic.py`（齿廓校核）需要，其余脚本零第三方依赖 |
+| 系统 | Windows 10/11 x64 | 原生 SLDPRT/SLDASM/SLDDRW 依赖 COM |
+| CAD | SOLIDWORKS 2022 SP5 | ProgID `SldWorks.Application.30` |
+| Python | 3.12 x64 + pywin32 | `pip install pywin32`；3.13 也可跑 |
+| pyyaml | 可选 | 没有时 capabilities_loader 用内置 mini 解析器 |
 
 ## 能做什么
 
-**建模（38 项 verified）**
+**建模（38 项 verified / 10 pilot / 3 not_implemented）**
+
 - 基础特征：拉伸、切除（贯穿/盲孔）、旋转、放样、扫描、抽壳
-- 修饰：圆角、倒角、**圆周阵列**、**镜像**、拔模（梯形/圆台等效法）
-- 专用：钣金基体法兰、曲面（拉伸/平面区域/**旋转**）、结构件焊件、偏移基准面
-- 已知不可用：孔向导（4 轮实测全部 None）、曲面加厚、API 上色、STL 导出
-- 专业：渐开线齿轮（齿条包络 + 整圈拼接）、谐波齿轮（摆线 CTP + 椭圆变形）
+- 修饰：圆角、倒角、圆周阵列、镜像、拔模等效
+- 专用：钣金基体法兰、曲面（拉伸/平面/旋转）、结构件焊件、偏移基准面
+- 专业：渐开线齿轮整环齿廓、谐波变形、样条
+- 装配：bbox 摆位、固定、同心/距离/重合配合、干涉检查
+- 出图：四视图、工程图、PDF、STEP
 
-**装配**：插入、**bbox 迭代摆位**、固定、组件上色、**同心/距离/重合配合（含平面重合）**、
-位姿快照比对、**漂移检测**、干涉检查
+**三个机制（防假成功）**
 
-**运动仿真**：运动算例创建、计算、播放、结果读取、AVI 导出
-
-**属性**：自定义属性、配置、材料（含回读校验）
-
-**出图**：四视图（含 fit 缩放）、工程图、自动标注、剖视图、STEP/PDF
-
-**校核门禁**：三段式判据（None→命名→重建→回读）、四级验证（BLOCKED>FAIL>WARN>PASS）、跨版本参数个数自适应
+- **交付新鲜度**：SHA-256 基线，旧文件不能冒充本轮成果
+- **能力缺口**：不会的能力返回结构化替代方案 + 探测建议
+- **执行 Trace**：每步留痕，失败带 `fail_at` 源码定位
 
 ## 快速开始
 
@@ -40,144 +40,84 @@
 import sys; sys.path.insert(0, r"<SKILL_DIR>/scripts")
 import swlib_v2 as V
 
-sw = V.connect(version=2022)              # ProgID=SldWorks.Application.30
+sw = V.connect(version=2022)
 m = V.new_part(sw)
-with V.addtoDB(m) as skm:                 # ★ 关闭 1mm 吸附
+with V.addtoDB(m) as skm:                 # 关 1mm 吸附
     V.L.new_sketch(m, "Front Plane")
     V.circle(skm, 0, 0, 25)               # 传圆周上一点，不是半径
     sk = V.last_sketch_name(m)
     skm.InsertSketch(True)
-    V.extrude_checked(m, sk, 50)          # 5 级选草图回退，失败抛异常
-
-V.volume_check(m, 3.14159265*25*25*50)    # 体积校验
+    V.extrude_checked(m, sk, 50)
+V.volume_check(m, 3.14159265*25*25*50)
 V.save_checked(m, r"C:\temp\cyl.SLDPRT")
 ```
 
-## 自检（改完库必跑）
+## 自检
 
 ```bash
-python scripts/run_all.py --static   # 0.7 秒，不开 SW ★ 每次改完先跑
-python scripts/run_all.py --quick    # 2.4 分钟，smoke + features
-python scripts/run_all.py            # 6.5 分钟，全量 8 套件
-python scripts/run_all.py --force    # 强制重跑（源文件没变默认跳过）
+python scripts/run_all.py --static   # 约 1 秒，不开 SW ★ 每次改完先跑（7 项）
+python scripts/run_all.py --quick    # 约 10 分钟，日常够用（7 静态 + 5 SW）
+python scripts/run_all.py            # 约 14 分钟，全量（7 静态 + 11 SW）
+python scripts/run_all.py --force    # 强制重跑
 ```
 
-| 套件 | 覆盖 |
+| 层 | 套件 |
 |---|---|
-| smoke | 圆柱全链路：体积/bbox/四视图 |
-| features | 旋转/抽壳/放样/扫描/圆角/倒角（dev 0.0000%） |
-| draft | 梯形/圆台拔模等效 |
-| sheetmetal | 钣金基体法兰（dev 0.0000%） |
-| props | 属性/配置/材料回读 |
-| surface | 曲面 + 结构件焊件 |
-| motion | 装配体 + 运动算例 + 计算 |
-| gate | 四级验证门禁降级逻辑 |
+| 静态 | compile / import / gate / freshness / gap / docs / golden |
+| SW | smoke / features / draft / sheetmetal / props / surface / motion / assembly / doctest / capcheck / trace |
+
+## 子技能
+
+| 子技能 | 用途 |
+|---|---|
+| `solidworks-engineering-drawing` | 出图 / 四视图 / PDF |
+| `solidworks-gears` | 齿轮 / 渐开线 / 齿廓 |
+| `solidworks-sheetmetal-weldment` | 钣金 / 焊件 / 角钢 |
+| `solidworks-assembly` | 装配 / 配合 / 干涉 |
+
+详见 [SUBSKILLS.md](SUBSKILLS.md)。子技能只放文档，代码统一在根 `scripts/`。
+
+## 单一真相源
+
+- **[capabilities.yaml](capabilities.yaml)** — 51 项能力：等级 / 限制 / 依赖 / 版本 / 允许模式
+- **[golden-workflows.yaml](golden-workflows.yaml)** — 8 个标准真机工作流：输入 / 产出 / 验收数值
+
+代码从 yaml 加载，文档数字由 `test_doc_consistency.py` 校验，手写数字会红。
 
 ## 目录结构
 
 ```
-SKILL.md                  主入口：7 条铁律 + 快速开始 + 路由表 + 能力总览
-references/
-  workflow.md             8 步流程、坐标契约（含基准面映射表）、验收矩阵
-  pitfalls.md             A~R 十八章 121 条踩坑速查
-  features.md             13 种手法的选择集 mark 与完整参数
-  api-map.md              接口归属表 + 参数签名陷阱 + 外部查证源
-  gears.md                渐开线包络 + CTP 摆线 + 椭圆变形
-  example_bracket.md      实战案例：电机支架（坐标契约+体积解析）
-  example_assembly.md     全能力验收：9 零件装配体 30/30
-scripts/
-  run_all.py              一键自检（4 档速度）
-  swlib_v2.py             核心封装（97 函数，按领域分区）
-  swlib.py                底层接口（gencache QueryInterface 正路）
-  verify_gate.py          四级交付门禁
-  gearring.py             齿轮整圈齿廓拼接（补 gearmath 缺口）
-  gearmath.py             渐开线几何（纯 Python）
-  probe_axes.py           探测三基准面轴映射
-  verify_all.py           行星减速器数学校核
-  check_harmonic.py       谐波齿轮校核
-  smoke_test.py           环境自检
-  test_features.py        6 种基础手法实测
-  test_draft.py           拔模等效实测
-  test_sheetmetal.py      钣金实测
-  test_props.py           属性/配置/材料实测
-  test_surface.py         曲面 + 焊件实测
-  test_motion.py          运动仿真实测
-assets/
-  harmonic_profiles.json  谐波齿廓点集（已降采样 1/4，138 KB）
+SKILL.md                  主入口：8 条铁律 + 核心 API + 路由 + 门禁
+SUBSKILLS.md              子技能矩阵
+capabilities.yaml         能力清单（单一真相源）
+golden-workflows.yaml     标准真机验收工作流
+references/              11 个参考文档（176 条踩坑 / API / 案例 / 三机制）
+scripts/                  29 个脚本（106 函数核心库 + 18 套件 + 三机制）
+subskills/                4 个子技能 × 3 文件
+assets/harmonic_profiles.json  谐波齿廓点集
 ```
 
-## 四条最容易踩的坑
+## 八条铁律
 
-1. **坐标映射先查表**：本机 **Y 才是"上下"**，不是 Z。
-   `Front(x,y)→XY 拉伸+Z` / `Top(x,-z)→XZ 拉伸+Y` / `Right(-z,y)→ZY 拉伸+X`。
-   写错会得到躺倒的模型。
-
-2. **选择集 mark 是命门**：`Select2(append, mark)` 优先；面/边退 `Select4(True, SelectData)`。
-   扫描路径 mark=4、放样截面 mark=1、阵列轴 mark=1 母特征 mark=4、抽壳面 mark=1。
-   **诊断/测量调用会清空选择集** —— 选完面立刻建特征。
-
-3. **void API 不能靠返回值判成败**：`InsertFeatureShell`、`FeatureExtruRefSurface`、
-   `InsertPlanarRefSurface` 成功也返回 None，必须用特征树/几何变化判据。
-
-4. **接口归属必须查证**：`GetPartBox`→IPartDoc、`InsertFeatureShell`→IModelDoc2、
-   `GetMotionStudyManager`→IModelDocExtension、`GetModeler`→**ISldWorks**、
-   `FirstFeature`→IModelDoc2、`AddConfiguration3`→IModelDoc2。凭记忆写必翻车。
+1. **不猜 API** — 长参数方法先 grep 类型库
+2. **不造轮子** — 先读 references/ 和 scripts/
+3. **不瞎试** — 同一问题 2 次未通就查 pitfalls，再查 GitHub
+4. **每步验证** — 判 None 不判真，体积+bbox+实体数三重断言
+5. **先存后改** — 已保存文档改动前备份
+6. **选择集 mark** — Select2(append, mark) 优先
+7. **坐标映射** — 本机 Y 是上下，不是 Z
+8. **装配一次成型** — 插入→摆位→固定→配合→出图→存盘，同一会话
 
 ## 已知限制
 
-**本机 API 走不通**（已试遍所有路径，不是用法问题）：
-
 | 能力 | 现象 | 替代 |
 |---|---|---|
-| 渲染上色 | `GetDisplayStateSetting` 抛 −2147417851 | `set_material()` / `set_component_color()` |
-| 曲面加厚 | `ThickenSheet` 恒返回 None | 用实体拉伸替代 |
-| STL 导出 | COM 导 0 字节 | 界面导出或 STEP 转换 |
-| 运动帧率 | `IMotionStudyProperties` 取不到 | 用默认帧率 |
-| 剖视图 | 需先画剖面线，未端到端实测 | — |
-| BOM 插表 | 数据能取，表格位置不可控 | 自建表格 |
+| 孔向导 | 4 轮实测全 None | 普通贯穿/盲孔切除 |
+| 曲面加厚 | ThickenSheet 恒 None | 实体拉伸或抽壳 |
+| API 上色 | GetDisplayStateSetting 抛异常 | set_material / set_component_color |
+| STL 导出 | COM 导 0 字节 | 先 STEP 再外部转 |
+| 运动帧率 | 接口取不到 | 默认帧率 |
 
 ## License
 
 MIT
-
-## 自检套件（10 个）
-
-```bash
-python scripts/run_all.py --static   # 0.7 秒，不开 SW ★ 每次改完先跑
-python scripts/run_all.py --quick    # 9 分钟，6 个核心套件 ★ 日常够用
-python scripts/run_all.py            # 13 分钟，全量 10 套件
-python scripts/run_all.py --cold     # 每套件冷启（排障用）
-```
-
-| 套件 | 覆盖 | 时长 |
-|---|---|---|
-| smoke | 圆柱全链路：体积/bbox/四视图 | 47s |
-| features | 旋转/抽壳/放样/扫描/圆角/倒角 | 122s |
-| draft | 梯形/圆台拔模等效 | 52s |
-| sheetmetal | 钣金基体法兰 | 42s |
-| props | 属性/配置/材料 | 42s |
-| surface | 曲面 + 结构件焊件 | 65s |
-| motion | 装配体 + 运动算例 + 计算 | 66s |
-| **assembly** | 端到端：摆位/固定/配合/漂移/干涉/四视图/工程图/重开 | 201s |
-| **doctest** | SKILL.md 示例代码实跑（6 组） | 142s |
-| **capcheck** | 能力表抽查：阵列/镜像/孔向导/曲面/焊件 | 167s |
-
-后三个是 2026-11-20 加的，专门守「组合行为」「文档示例」「能力表真实性」——
-这三类以前没有测试覆盖。
-
-## 实战案例
-
-| 案例 | 内容 |
-|---|---|
-| `references/example_belt_actuator.md` | **14 零件同步带模组**：31/31 能力覆盖、14 件体积全 0.000%、12 条新坑 |
-| `references/example_assembly.md` | 9 零件装配体：30/30 能力覆盖（历史记录） |
-| `references/example_bracket.md` | 电机支架：多基准面 + 加强筋 + 出图 |
-
-## 踩坑速查
-
-`references/pitfalls.md` —— **19 章 176 条**，全部本机实测。
-
-最后三章是 2026-11-20 新增：
-- **S13** mirror / circular_pattern 的 mark 与轴（两个都写反过）
-- **S14** weldment_cut_list 是"读"不是"建"
-- **S15** hole_wizard 在本机确实不可用（4 轮实测记录）

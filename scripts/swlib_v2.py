@@ -1685,65 +1685,21 @@ PILOT = "pilot"                 # 能用但未充分验证，需人工看
 REFERENCE_ONLY = "reference_only"   # 文档写了没证据
 NOT_IMPLEMENTED = "not_implemented"
 
-CAPABILITIES = {
-    # —— verified：本机 SW2022 实测，体积/bbox 精确吻合
-    "part.extrude": (VERIFIED, "create_circle→extrude，体积吻合 0.0000%"),
-    "part.cut_through": (VERIFIED, "Sd=False+T1=T2=1 双向贯穿"),
-    "part.cut_blind": (VERIFIED, "盲孔切除"),
-    "sketch.arc": (VERIFIED, "IModelDoc2.CreateArc2，弧先画线后画"),
-    "sketch.spline": (VERIFIED, "CreateSpline + 去重 tol=1e-5"),
-    "pattern.circular": (VERIFIED, "FeatureCircularPattern5，mark1=轴 mark4=特征；2026-11-20 实测 count=2/4/6 分别新增 1/3/5 孔，体积精确；★ 轴必须过孔心所在轴线"),
-    "part.fillet": (VERIFIED, "FeatureFillet 7 参；收缩圆角 dev 0.0000%"),
-    "part.chamfer": (VERIFIED, "InsertFeatureChamfer 8 参；体积下降已验"),
-    "part.revolve": (VERIFIED, "FeatureRevolve2，dev 0.0000%（中心线必需）"),
-    "part.loft": (VERIFIED, "InsertProtrusionBlend2，逐张 Select2(mark=1)，dev 0.0000%"),
-    "part.sweep": (VERIFIED, "InsertProtrusionSwept4，路径 Select2(mark=4)，dev 0.0000%"),
-    "part.shell": (VERIFIED, "IModelDoc2.InsertFeatureShell，面 Select4(mark=1)，dev 0.0000%"),
-    "ref.offset_plane": (VERIFIED, "InsertRefPlane(8=Distance)，放样平行截面用"),
-    "part.mirror": (VERIFIED, "InsertMirrorFeature2 5 参；★特征 mark=1 面 mark=2（旧文档写反）；实测 Δ=-4000.00 精确"),
-    "part.draft_equiv": (VERIFIED, "梯形拉伸/圆台旋转等效拔模，dev 0.0000%/-0.07%"),
-    "part.sheetmetal_base_flange": (VERIFIED, "FeatureData 路线(CreateDefinition 34)，dev 0.0000%"),
-    "part.hole_wizard": (PILOT, "HoleWizard5 27 参；2026-11-20 按官方 VBA 复刻试遍 Standard/Fastener/SSize 组合全部 None，本机不可用，改普通切除"),
-    "surface.extrude": (VERIFIED, "FeatureExtruRefSurface 21 参，判据靠 body_counts"),
-    "surface.planar": (VERIFIED, "IModelDoc2.InsertPlanarRefSurface（不在 FeatureManager）"),
-    "surface.revolve": (VERIFIED, "InsertRevolvedRefSurface 4 参；实测 solid=0 sheet=1"),
-    "surface.thicken": (NOT_IMPLEMENTED, "ThickenSheet 本机恒返回 None（已验证所有调用方式）"),
-    "weldment.structural": (VERIFIED, "InsertStructuralWeldment5 + 组数组，vol 333751 实测"),
-    "weldment.cut_list": (PILOT, "读 CutListFolder；★生成条件与型材总长有关，同样 4 实体 700x300 得 2 项、200x120 得 0 项"),
-    "motion.study": (VERIFIED, "CreateMotionStudy + Calculate 实测通过（含中文算例名）"),
-    "motion.results": (PILOT, "GetLinearVelocity/GetAngularVelocity，未单独实测"),
-    "motion.avi": (PILOT, "SaveToAVI 依赖编解码器，未实测"),
-    "motion.framerate": (PILOT, "IMotionStudyProperties 取不到，本机接口限制"),
-    "props.custom": (VERIFIED, "Add3 写 / Get6 读（值在索引 1）"),
-    "config.create": (VERIFIED, "IModelDoc2.AddConfiguration3"),
-    "material.set": (VERIFIED, "SetMaterialPropertyName2 + 回读校验"),
-    "asm.insert": (VERIFIED, "OpenDoc6→AddComponent5→ActivateDoc3"),
-    "asm.place": (VERIFIED, "ComposeTransform 行向量 + 绝对平移（设组件原点非 bbox 中心）"),
-    "asm.fix": (VERIFIED, "FixComponent，需先选组件"),
-    "asm.mate.concentric": (VERIFIED, "AddMate5 type=1，轴↔齿轮/法兰/接头，err=1"),
-    "asm.mate.distance": (VERIFIED, "AddMate5 type=5，5 个距离配合实测通过"),
-    "asm.mate.coincident": (VERIFIED, "AddMate5 type=0，钣金↔焊件"),
-    "asm.mate.surface_body": (VERIFIED, "曲面件用组件基准面配合（GetBody 返回 None）"),
-    "appearance.component": (VERIFIED, "组件级 SetMaterialPropertyValues2 + 9元素VARIANT"),
-    "export.step": (VERIFIED, "SaveAs3"),
-    "export.png": (VERIFIED, "切视图+ActivateDoc3 后 SaveAs3"),
-    "drawing.create": (VERIFIED, "插件驱动 action=create"),
-    "gear.involute": (VERIFIED, "齿条包络 + 摆线齿根，对称偏差 8.3e-17"),
-    "gear.full_ring": (VERIFIED, "gearring.full_ring 整圈拼接，2761 点 r_min=rf r_max=ra"),
+def _load_capabilities():
+    """从 capabilities.yaml 加载能力表（单一真相源）。
 
-    # —— pilot：能用但边界未摸清
-    "asm.mate.plane_coincident": (VERIFIED, "★先 fix_all 再建，漂移恒 0.00mm；不固定则零件被拉散（实测 135mm）"),
-    "asm.mate.axis_concentric": (PILOT, "本机实测不建配合，改用基准面"),
-    "appearance.render": (PILOT, "需补光；像素统计验收"),
-    "appearance.display_color": (NOT_IMPLEMENTED,
-                                 "GetDisplayStateSetting 一律抛 -2147417851，API 上色不可用"),
-    "export.stl": (PILOT, "本机 COM 导 0 字节，未打通"),
-    "drawing.section": (PILOT, "剖视图 API 未通"),
-    "bom.table_insert": (PILOT, "数据能取，插表位置不可控"),
+    ★ 失败时抛 RuntimeError 而不是静默用空表 —— 能力表缺失必须被发现。
+    pyyaml 缺失时 capabilities_loader 会用内置 mini 解析器，零第三方依赖。
+    """
+    import os
+    try:
+        import capabilities_loader as CL
+        return CL.to_swlib_table()
+    except Exception as e:
+        raise RuntimeError("无法从 capabilities.yaml 加载能力表: %s" % e)
 
-    # —— 明确不做
-    "export.sldprt_to_web": (NOT_IMPLEMENTED, "需转 glTF"),
-}
+
+CAPABILITIES = _load_capabilities()
 
 
 def capability(name):
@@ -1752,11 +1708,40 @@ def capability(name):
 
 
 def require_verified(name):
-    """交付前门禁：非 verified 直接拒绝。"""
+    """交付前门禁：非 verified 直接拒绝。
+
+    ★ 2026-11-20 升级：改为抛 capability_gap.CapabilityGapError，
+      携带结构化缺口（替代方案 / 探测建议 / 后续步骤），
+      而不是只给一句「不行」。调用方可以 `except e: print(e.gap.to_json())`。
+
+    兼容旧行为：CapabilityGapError 继承 RuntimeError，原来的
+    `except RuntimeError` 仍然能捕获。
+    """
     level, note = capability(name)
-    if level != VERIFIED:
-        raise RuntimeError("能力 %s 等级=%s（%s），不能作为无人值守交付" % (name, level, note))
-    return True
+    if level == VERIFIED:
+        return True
+    try:
+        import capability_gap as CG
+        raise CG.CapabilityGapError(CG.probe_capability(name))
+    except ImportError:
+        raise RuntimeError("能力 %s 等级=%s（%s），不能作为无人值守交付"
+                           % (name, level, note))
+
+
+def capability_gap(name):
+    """软查询能力缺口：verified 返回 None，否则返回 CapabilityGap。
+
+    用法：
+        gap = V.capability_gap("part.hole_wizard")
+        if gap:
+            print(gap.report())
+    """
+    try:
+        import capability_gap as CG
+        return CG.probe_capability(name)
+    except ImportError:
+        lv, note = capability(name)
+        return None if lv == VERIFIED else (lv, note)
 
 
 def capability_report(names=None):

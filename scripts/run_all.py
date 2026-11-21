@@ -41,10 +41,15 @@ SW_SUITES = [
     ("assembly",   "test_assembly.py",   "ASSEMBLY PASS",  "端到端：摆位/固定/配合/漂移/出图/重开", True),
     ("doctest",    "doctest_examples.py", "DOC EXAMPLES PASS", "SKILL.md 示例代码实跑", True),
     ("capcheck",   "capcheck.py",        "CAP CHECK PASS",  "能力表抽查：阵列/镜像/孔向导/曲面/焊件", True),
+    ("trace",      "test_exec_trace.py", "EXEC TRACE PASS", "执行 Trace：每步留痕+失败定位", True),
 ]
 
 STATIC_SUITES = [
     ("gate", "verify_gate.py", "GATE SELFTEST PASS", "四级验证门禁降级逻辑"),
+    ("freshness", "test_freshness.py", "FRESHNESS PASS", "交付新鲜度：旧文件不能冒充本轮成果"),
+    ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测"),
+    ("docs", "test_doc_consistency.py", "DOC CONSISTENCY PASS", "单一真相源：数字/引用/id 自洽"),
+    ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "8 个标准真机工作流验收"),
 ]
 
 
@@ -146,8 +151,14 @@ def layer_static():
         print("  [import]   FAIL %s" % str(e)[:120])
         ok = False
 
-    ok2, err = run_script("verify_gate.py", "GATE SELFTEST PASS", timeout=60)
-    print("  [gate]     %s%s" % ("PASS", "" if ok2 else "  FAIL " + err))
+    ok2 = True
+    for name, script, marker, desc in STATIC_SUITES:
+        ok_s, err = run_script(script, marker, timeout=120)
+        print("  [%-10s] %s  %s%s"
+              % (name, "PASS" if ok_s else "FAIL", desc,
+                 "" if ok_s else "  <- " + err))
+        if not ok_s:
+            ok2 = False
     return ok and ok2
 
 

@@ -87,7 +87,7 @@ V.save_checked(asm, r"C:\temp\asm.SLDASM")
 ```bash
 python scripts/run_all.py --static   # 0.7 秒，不开 SW ★ 每次改完先跑这个
 python scripts/run_all.py --quick    # 9 分钟，+ assembly + doctest + capcheck ★ 日常够用
-python scripts/run_all.py            # 6.5 分钟，全量 8 套件
+python scripts/run_all.py            # 约 14 分钟，全量 7 静态项 + 11 SW 套件
 python scripts/run_all.py --cold     # 10 分钟，每套件冷启（排障用）
 python scripts/run_all.py --force    # 强制重跑（默认源文件没变会跳过）
 ```
@@ -115,6 +115,11 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | **assembly** | **端到端：摆位/固定/配合/漂移/干涉/四视图/工程图/重开** |
 | **doctest** | **SKILL.md 里的示例代码实跑（6 组）** |
 | **capcheck** | **能力表抽查：圆周阵列/镜像/孔向导/旋转曲面/焊件切割清单** |
+| **freshness**（静态层） | **交付新鲜度：旧文件不能冒充本轮成果（11 项断言）** |
+| **gap**（静态层） | **能力缺口协议：结构化替代+COM探测（12 项断言）** |
+| **trace** | **执行 Trace：每步留痕+失败定位（10 项断言）** |
+| **docs**（静态层） | **单一真相源：数字/引用/id 自洽（9 项断言）** |
+| **golden**（静态层） | **8 个标准工作流验收，真机数值对 REPORT.json（10 项断言）** |
 | gate | 四级验证门禁降级逻辑 |
 
 ---
@@ -133,6 +138,44 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | **最新全能力案例**（14 零件同步带模组） | `references/example_belt_actuator.md` | **31/31 当时清单全覆盖、14 件体积 0.000%、12 条新坑** |
 | 建错方向 / 坐标不对 | `scripts/probe_axes.py` | 一键探测三基准面的轴映射 |
 | **装配组合行为怎么验** | `scripts/test_assembly.py` | 端到端 9 项断言（摆位/固定/漂移/视图/重开） |
+| **交付物是不是本轮生成的** | `references/delivery-freshness.md` | SHA-256 基线、mtime 不算新、旧文件不可掩盖 |
+| **能力不够时怎么办** | `references/capability-gap.md` | 结构化缺口、替代方案表、COM 探测、5 步后续 |
+| **过程怎么留痕、失败怎么定位** | `references/exec-trace.md` | 每步 inputs/outputs/evidence、fail_at 定位 |
+| **能力清单在哪定义** | `capabilities.yaml` | 单一真相源：等级/限制/依赖/版本/允许模式 |
+| **文档数字和源码是否一致** | `scripts/test_doc_consistency.py` | 9 项自洽断言（数字/引用/id/子技能/回退） |
+| **专项工作流走哪个子技能** | `SUBSKILLS.md` | 4 个子技能：工程图/齿轮/钣金焊件/装配 |
+| **标准真机验收清单** | `golden-workflows.yaml` | 8 个 workflow：输入/产出/验收数值 |
+
+## Golden Workflow（标准真机验收）
+
+`golden-workflows.yaml` 定义 8 个标准工作流，每个声明：
+`required_inputs`（必须先有的输入） / `required_artifacts`（必须交付的文件） /
+`real_acceptance_2022`（本机实测数值，不编造跨版本结论）。
+
+| id | 名称 | 验收数值示例 |
+|---|---|---|
+| `mounting_bracket` | 电机支架 | vol=368731.4 dev=-0.32% |
+| `spur_gear_pair` | 齿轮对 | z20=2301 点 / z40=4601 点 |
+| `belt_actuator_assembly` | 14 件同步带模组 | 15 组件/10 配合/0 偏差 |
+| `sheetmetal_bracket` | 钣金电机板 | vol=38550.8 dev=0.000% |
+| `weldment_frame` | 角钢机架 | vol=260848.9 4 实体 |
+| `drawing_delivery` | 工程图交付 | 4 视图 md5 互异 |
+| `motion_study` | 运动算例 | 2 算例计算成功 |
+| `capability_gate_drill` | 三机制拦截 | 11+12+10+9+10 项断言 |
+
+★ `capability_gate_drill` 用 `infrastructure` 字段（不是 capabilities）——
+机制是执行基础设施，不是建模能力。
+
+## 子技能路由
+
+| 用户意图 | 子技能 |
+|---|---|
+| 出图 / 工程图 / 四视图 / PDF | `subskills/solidworks-engineering-drawing/SKILL.md` |
+| 齿轮 / 渐开线 / 齿廓 / 齿数 | `subskills/solidworks-gears/SKILL.md` |
+| 钣金 / 折弯 / 焊件 / 角钢 | `subskills/solidworks-sheetmetal-weldment/SKILL.md` |
+| 装配 / 配合 / 摆位 / 干涉 | `subskills/solidworks-assembly/SKILL.md` |
+
+★ 子技能只放文档，**代码统一在根技能 `scripts/`**，新坑回写根 `references/pitfalls.md`。
 
 ---
 
@@ -173,7 +216,27 @@ V.volume_check(m, theory, tag="x")    # 返回 (ok, 实测, 偏差%)
 V.verify(m, volume=..., bbox=..., bodies=1)   # 体积按相对%、bbox 按绝对 mm
 V.body_counts(m)                      # (实体数, 曲面体数)
 V.capability_report()                 # 38 verified + 10 pilot + 3 not_implemented
-V.require_verified("part.extrude")    # 交付门禁，pilot 直接拒绝
+V.require_verified("part.extrude")    # 交付门禁；非 verified 抛 CapabilityGapError
+
+# 能力不够时：拿结构化缺口，不是裸异常
+import capability_gap as CG
+gap = CG.probe_capability("part.hole_wizard")
+if gap:
+    print(gap.report())        # 类型/替代方案/探测建议/5 步后续
+    print(gap.to_json())       # 给 Agent 消费
+CG.require_any(["part.hole_wizard", "part.cut_through"])   # → "part.cut_through"
+CG.com_has(sw, "IFeatureManager", "HoleWizard5")           # True（写最小实现前先探）
+
+# 过程留痕：每步记入参/产出/证据，失败自动定位
+import exec_trace as ET
+tr = ET.Trace("belt_actuator")
+tr.env(sw_version="30.5.0")
+with tr.step("P1.extrude", depth=600) as s:
+    V.extrude_checked(m, sk, 600)
+    s.output("volume", V.volume_mm3(m))
+    s.ev("dev_pct", 0.000)
+tr.save(r"out\trace.json")
+tr.require_ok()                            # 有 fail 就抛（带 fail_at 文件行号）
 ```
 
 **装配**（★ 2026-11-20 新增 12 个封装 + 修 1 个，全部本机实测）
@@ -225,14 +288,28 @@ V.view_name_of(v)                                          # "工程图视图1"
 ```
 ★ 四视图是否真的不同**比 md5 哈希，不比文件大小**。
 
-**交付门禁**（`scripts/verify_gate.py`，移植 wzyn 2199★）
+**交付门禁**（`scripts/verify_gate.py` + `scripts/artifact_freshness.py`）
 ```python
 from verify_gate import Gate, PASS, WARN, FAIL, BLOCKED
+import artifact_freshness as F
+
+# ① 几何门禁
 g = Gate("part")
 g.check("volume", ok, "体积偏差 0.01%")
 g.check("visual_review", None, "未目视复核", level=BLOCKED)  # 无法验证≠PASS
-v = g.verdict()    # BLOCKED>FAIL>WARN>PASS；空结果一律 BLOCKED
+
+# ② 交付新鲜度门禁（★ 2026-11-20 新增，防旧文件冒充本轮成果）
+base = F.scan(out_dir); base.save(r".baseline.json")   # 建模前
+# ... 建模/导出 ...
+rep = F.diff(base, out_dir, paths=deliverables)        # 必须显式传清单
+gf = F.to_gate(rep, "freshness")
+
+# ③ 合并：几何 PASS + 新鲜度 FAIL → 整体 FAIL
+v = F.merge_gates([g, gf], "delivery").verdict()
+# BLOCKED>FAIL>WARN>PASS；空结果一律 BLOCKED
 ```
+★ 新鲜度只证明「文件新增或内容变了」，**不证明几何正确** —— 必须和几何断言、
+目视复核一起用。详见 `references/delivery-freshness.md`。
 
 **专业手法**（详见 `references/features.md`）
 ```python
@@ -269,6 +346,10 @@ assert check_ring(ring, g)["r_ok"]
 ---
 
 ## 能力总览（38 verified / 10 pilot / 3 not_implemented）
+
+> ★ **单一真相源**：能力清单在 `capabilities.yaml`（等级 / 限制 / 依赖 / 版本 / 允许模式），
+> `swlib_v2.CAPABILITIES` 从它加载，本文档数字由 `test_doc_consistency.py` 校验。
+> **加能力只改 yaml，别手写数字** —— 数字和源码不一致会让测试变红。
 
 > **2026-11-20 用 14 零件同步带模组做过全量验收：31/31 当时清单全覆盖，14 件体积全部 0.000%**；
 > 之后 capcheck 又实证了 mirror / surface.revolve / plane_coincident 三项，能力表升至 38 verified。
@@ -351,6 +432,11 @@ assert check_ring(ring, g)["r_ok"]
 - [ ] 四视图非空且**目视**检查
 - [ ] 渲染图有颜色（像素统计 colored>15% 或 bright>10%）
 - [ ] 文件大小回读 >0
+- [ ] **交付文件全部是本轮新增或内容变化**（`F.require_fresh`，mtime 变化不算）
+- [ ] **用到的能力都是 verified**（`CG.require`；非 verified 走 gap 的替代方案）
+- [ ] **执行过程有 trace**（`tr.require_ok()`；失败步骤带 `fail_at` 定位）
+- [ ] **文档数字与 `capabilities.yaml` 一致**（`python scripts/test_doc_consistency.py`）
+- [ ] **交付符合对应 golden workflow 的 required_artifacts / 验收数值**
 - [ ] 新坑已写入 `references/pitfalls.md`
 
 ---
