@@ -205,10 +205,26 @@ class CapabilityGapError(RuntimeError):
 
 # ---------------------------------------------------------------- 查询
 def _caps():
-    """延迟导入 CAPABILITIES，避免循环依赖。"""
+    """延迟导入 CAPABILITIES，避免循环依赖。
+
+    ★ 离线回退：swlib_v2 顶层依赖 pythoncom，没装 pywin32 / 非 Windows 时
+      import 必然失败。此时直接读 capabilities.yaml（capabilities_loader 自带
+      mini 解析器，零第三方依赖），保证离线层也能正确判定能力等级，
+      而不是把所有能力误判成「不可用」。
+    """
     try:
         import swlib_v2 as V
         return V.CAPABILITIES, V.capability
+    except Exception:
+        pass
+    try:
+        import capabilities_loader as CL
+        table = CL.to_swlib_table()
+
+        def _capability(name):
+            return table.get(name, (REFERENCE_ONLY, "未登记"))
+
+        return table, _capability
     except Exception:
         return {}, None
 

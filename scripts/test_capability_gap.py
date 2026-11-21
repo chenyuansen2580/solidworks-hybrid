@@ -16,12 +16,35 @@ sys.path.insert(0, HERE)
 import capability_gap as CG   # noqa: E402
 
 fails = []
+skips = []
+
+
+def _table():
+    """能力表 + 等级常量：优先真库，无 COM 环境回退 capabilities.yaml。"""
+    try:
+        import swlib_v2 as V
+        return V.CAPABILITIES, V.capability, V
+    except Exception:
+        import capabilities_loader as CL
+        table = CL.to_swlib_table()
+
+        def cap(name):
+            return table.get(name, (CL.REFERENCE_ONLY, "未登记"))
+
+        return table, cap, CL
+
+
+class _Skip(Exception):
+    """需要真机 COM 的用例，在离线环境跳过而不计失败。"""
 
 
 def chk(name, fn):
     try:
         fn()
         print("  [OK] %s" % name)
+    except _Skip as e:
+        print("  [--] %-44s SKIP（%s）" % (name, e))
+        skips.append(name)
     except AssertionError as e:
         print("  [XX] %-44s %s" % (name, e))
         fails.append(name)
@@ -99,10 +122,10 @@ def t_report_readable():
 
 def t_all_pilot_have_alternatives():
     """所有 pilot / not_impl 能力都应有替代方案，否则 Agent 会卡住"""
-    import swlib_v2 as V
+    caps, _cap, L = _table()
     missing = []
-    for name, (lv, note) in V.CAPABILITIES.items():
-        if lv in (V.PILOT, V.NOT_IMPLEMENTED):
+    for name, (lv, note) in caps.items():
+        if lv in (L.PILOT, L.NOT_IMPLEMENTED):
             g = CG.probe_capability(name)
             if g and not g.alternatives:
                 missing.append(name)
@@ -111,9 +134,12 @@ def t_all_pilot_have_alternatives():
 
 # ---------------------------------------------------------------- 真实 COM 探测
 def t_com_probe_real():
-    """真实探测：已验证的 API 应能读到，编造的应读不到"""
-    import pythoncom
-    import swlib_v2 as V
+    """真实探测：已验证的 API 应能读到，编造的应读不到（仅真机）"""
+    try:
+        import pythoncom
+        import swlib_v2 as V
+    except ImportError as e:
+        raise _Skip("需 Windows + pywin32：%s" % e)
     pythoncom.CoInitialize()
     sw = V.connect(version=2022, verbose=False, warn_multi=False, wait_ready=30)
 
@@ -139,17 +165,17 @@ def t_com_probe_real():
 
 def t_gap_guides_to_real_alternative():
     """★ gap 给的替代方案必须是真的 verified —— 否则引导 Agent 踩坑"""
-    import swlib_v2 as V
+    _caps, cap, L = _table()
     bad = []
     for name in ("part.hole_wizard", "surface.thicken", "export.stl",
                  "asm.mate.axis_concentric", "appearance.render"):
         g = CG.probe_capability(name)
         if not g:
             continue
-        for cap, why in g.alternatives:
-            lv, _ = V.capability(cap)
-            if lv != V.VERIFIED and cap not in ("part.hole_wizard",):
-                bad.append((name, cap, lv))
+        for c, why in g.alternatives:
+            lv, _ = cap(c)
+            if lv != L.VERIFIED and c not in ("part.hole_wizard",):
+                bad.append((name, c, lv))
     # 允许替代方案本身是 pilot（说明里会标注），但不能全是 pilot
     assert len(bad) <= 2, "替代方案里 verified 太少: %s" % bad
 
@@ -169,6 +195,8 @@ chk("★ 替代方案指向真 verified", t_gap_guides_to_real_alternative)
 chk("真实 COM 探测", t_com_probe_real)
 
 print()
+if skips:
+    print("跳过 %d 项（需真机）: %s" % (len(skips), skips))
 if fails:
     print("失败 %d 项: %s" % (len(fails), fails))
     sys.exit(1)
