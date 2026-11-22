@@ -60,7 +60,7 @@ SW_SUITES = [
 STATIC_SUITES = [
     ("gate", "verify_gate.py", "GATE SELFTEST PASS", "四级验证门禁降级逻辑", ()),
     ("freshness", "test_freshness.py", "FRESHNESS PASS", "交付新鲜度：旧文件不能冒充本轮成果", ()),
-    ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测", ()),
+    ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测", ("--offline",)),
     ("docs", "test_doc_consistency.py", "DOC CONSISTENCY PASS", "单一真相源：数字/引用/id 自洽", ()),
     ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "9 个标准真机工作流验收", ()),
     ("apilookup", "test_api_lookup.py", "API LOOKUP PASS", "API 查证：类型库签名/参类型/by-ref", ()),

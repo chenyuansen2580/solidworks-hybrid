@@ -166,7 +166,11 @@ chk("JSON 可序列化", t_json_roundtrip)
 chk("report 可读", t_report_readable)
 chk("★ 所有 pilot/not_impl 都有替代", t_all_pilot_have_alternatives)
 chk("★ 替代方案指向真 verified", t_gap_guides_to_real_alternative)
-chk("真实 COM 探测", t_com_probe_real)
+# ★ --offline：跳过真机 COM 探测，静态层不应该启动 SW
+if "--offline" in sys.argv:
+    print("  [--] 真实 COM 探测        SKIP（--offline，需 SW）")
+else:
+    chk("真实 COM 探测", t_com_probe_real)
 
 print()
 if fails:
