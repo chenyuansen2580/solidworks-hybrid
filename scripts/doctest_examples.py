@@ -174,6 +174,84 @@ def t_views():
     V.close_doc(sw, m, force=True)
 
 
+# ---------------- 7 结果自审查（review.run_review）
+def t_review_example():
+    import review as R
+    m = V.new_part(sw)
+    with V.addtoDB(m) as skm:
+        V.L.new_sketch(m, "Front Plane")
+        V.circle(skm, 0, 0, 20)
+        sk = V.last_sketch_name(m)
+        skm.InsertSketch(True)
+    V.extrude_checked(m, sk, 40)
+    part = os.path.join(OUT, "rev_doc.SLDPRT")
+    V.save_checked(m, part)
+    rep, path = R.run_review(m, os.path.join(OUT, "review"), basename="rev_doc",
+                             expected_outputs=[part], sw=sw)
+    assert os.path.exists(path), "报告未落盘"
+    assert rep["status"] == R.PASS, "应 pass，实得 %s %s" % (rep["status"], rep["issues"])
+    md5s = {v.get("md5") for v in rep["views"].values() if v.get("md5")}
+    assert len(md5s) == 4, "四视图 md5 应互异，实得 %d" % len(md5s)
+    # to_gate 也能用
+    assert R.to_gate(rep).verdict().status == "pass"
+    V.close_doc(sw, m, force=True)
+
+
+# ---------------- 8 by-ref 出参（swlib.call_byref）
+def t_byref_example():
+    import swlib as L
+    m = V.new_part(sw)
+    with V.addtoDB(m) as skm:
+        V.L.new_sketch(m, "Top Plane")
+        V.L.rect(skm, -10, -10, 10, 10)
+        sk = V.last_sketch_name(m)
+        skm.InsertSketch(True)
+    V.extrude_checked(m, sk, 10)
+    p = os.path.join(OUT, "byref_doc.SLDPRT")
+    ret, outs = L.call_byref(m, "SaveAs4", [p, 0, 0], ["i4", "i4"])
+    assert ret is True and outs == [0, 0], "合法路径应 (True, [0,0])，实得 %s %s" % (ret, outs)
+    # 非法路径必须取回真实错误码（这是 by-ref 真的通了的证据）
+    ret2, outs2 = L.call_byref(m, "SaveAs4", [r"Z:\no_dir\x.SLDPRT", 0, 0], ["i4", "i4"])
+    assert ret2 is False and outs2[0] == 1, "应 (False, [1,0])，实得 %s %s" % (ret2, outs2)
+    # 早绑定拆包
+    r, split = L.split_out((True, 0, 0), 2)
+    assert r is True and split == [0, 0]
+    V.close_doc(sw, m, force=True)
+
+
+# ---------------- 9 网格导入（mesh_import）
+def t_mesh_example():
+    import mesh_import as MI
+    src = MI.write_test_stl(os.path.join(OUT, "doc_box.stl"), (20, 30, 40))
+    pc = MI.precheck_stl(src)
+    assert pc["ok"], "生成的 STL 法线应正常: %s" % pc
+    rep = MI.import_mesh(sw, src, expect_bbox_mm=(0, 0, 0, 20, 30, 40))
+    assert rep["ok"], [c for c in rep["checks"] if c["status"] == "fail"]
+    assert rep["bbox_mm"] == [0.0, 0.0, 0.0, 20.0, 30.0, 40.0], rep["bbox_mm"]
+    assert rep["mesh_bodies"] >= 1
+    V.close_doc(sw, rep["doc"], force=True)
+
+
+# ---------------- 10 工程图交付（drawing_delivery）
+def t_drawing_example():
+    import drawing_delivery as DD
+    m = V.new_part(sw)
+    with V.addtoDB(m) as skm:
+        V.L.new_sketch(m, "Top Plane")
+        V.L.rect(skm, -30, -20, 30, 20)
+        sk = V.last_sketch_name(m)
+        skm.InsertSketch(True)
+    V.extrude_checked(m, sk, 15)
+    part = os.path.join(OUT, "doc_dwg.SLDPRT")
+    V.save_checked(m, part)
+    rep = DD.create_drawing(sw, part, os.path.join(OUT, "doc_dwg.pdf"))
+    assert rep["views_made"] >= 3, "应 ≥3 视图，实得 %s" % rep["views_made"]
+    assert rep["pdf_bytes"] > DD.MIN_PDF_BYTES, "PDF %d B" % rep["pdf_bytes"]
+    manual = [c for c in rep["checks"] if c["kind"] == "manual"]
+    assert len(manual) == 4, "应有 4 项人判，实得 %d" % len(manual)
+    V.close_doc(sw, m, force=True)
+
+
 print("=== SKILL.md 示例代码实跑 ===\n")
 chk("快速开始（圆柱）", t_quickstart)
 chk("旋转（中心线）", t_revolve)
@@ -181,6 +259,10 @@ chk("offset_plane_named + 放样", t_offset_named)
 chk("plane_at / cyl_of 纯逻辑", t_faces_api)
 chk("place_to / fix_all / max_drift / interference_ok", t_assembly_api)
 chk("四视图 ViewZoomout + md5 互异", t_views)
+chk("结果自审查 run_review", t_review_example)
+chk("by-ref 出参 call_byref", t_byref_example)
+chk("网格导入 import_mesh", t_mesh_example)
+chk("工程图交付 create_drawing", t_drawing_example)
 
 print()
 if fails:

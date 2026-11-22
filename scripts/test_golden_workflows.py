@@ -149,7 +149,7 @@ def t_gear_acceptance():
 
 
 def t_gates_acceptance():
-    """三个机制的断言数从测试文件实际统计"""
+    """三个机制的断言数从测试文件实际统计（含 golden 自身）"""
     gw = [w for w in gws() if w["id"] == "capability_gate_drill"][0]
     acc = gw["real_acceptance_2022"]
     counts = {
@@ -157,10 +157,11 @@ def t_gates_acceptance():
         "gap_assertions": "test_capability_gap.py",
         "trace_assertions": "test_exec_trace.py",
         "doc_consistency_assertions": "test_doc_consistency.py",
+        "golden_assertions": "test_golden_workflows.py",
     }
     for key, fn in counts.items():
         src = io.open(os.path.join(HERE, fn), encoding="utf-8").read()
-        n = len(re.findall(r"^chk\(", src, re.M))
+        n = len(re.findall(r"^\s*chk\(", src, re.M))
         assert n == acc[key], "%s 声明 %d，实际 %d" % (key, acc[key], n)
     return "断言数与实际测试一致"
 
@@ -171,6 +172,123 @@ def t_no_false_version_claims():
         keys = [k for k in w if k.startswith("real_acceptance_")]
         assert keys == ["real_acceptance_2022"], \
             "%s 版本声明错误: %s" % (w["id"], keys)
+
+
+def t_drawing_acceptance_matches_code():
+    """★ 工程图验收值必须与 capabilities.yaml / 代码常量一致。
+
+    这条防的是"文档数字落后于实测"：上一轮把 annotations 从 pilot 升到
+    verified 后，golden-workflows.yaml 还写着 `annotations_added: 0` +
+    `pdf_bytes: 7130`（旧值），文档与证据不一致。
+    """
+    import capabilities_loader as CL
+    gw = [w for w in gws() if w["id"] == "drawing_delivery"][0]
+    acc = gw["real_acceptance_2022"]
+
+    caps = CL.capabilities()
+    ann = caps.get("drawing.annotations", {})
+    assert ann.get("level") == acc["annotations_level"], \
+        "annotations 等级 %s != yaml %s" % (acc["annotations_level"], ann.get("level"))
+    assert acc["annotations_added"] > 0, "verified 就该有 >0 的增量证据"
+
+    # types 必须与代码里的 ANN_WORKING 一致
+    import swlib_v2 as V
+    assert acc["annotations_types_required"] == V.ANN_WORKING, \
+        "验收写的 types %s != 代码 ANN_WORKING %s" % (
+            acc["annotations_types_required"], V.ANN_WORKING)
+    assert V.ANN_WORKING & 32768, "ANN_WORKING 必须含 32768 位"
+
+    # 孔表等级必须一致
+    ht = caps.get("drawing.hole_table", {})
+    assert ht.get("level") == acc["hole_table"], \
+        "hole_table 等级 %s != yaml %s" % (acc["hole_table"], ht.get("level"))
+
+    # PDF 有标注应大于无标注
+    assert acc["pdf_bytes"] > acc["pdf_bytes_without_annotations"], \
+        "插了标注的 PDF 应该更大"
+
+    # capabilities 里要真的登记了 golden 声明的每个能力
+    for cid in gw["capabilities"]:
+        assert cid in caps, "golden 声明了未登记能力 %s" % cid
+    return "types/等级/PDF 三处与代码一致"
+
+
+def t_sheet_size_api_consistent():
+    """★ 幅面必须走 ISheet.GetSize，不能靠 GetProperties 按位置猜索引。
+
+    实测 GetProperties 返回 7 项 `(0.0, 13.0, 1.0, 1.0, 1.0, 0.2794, 0.2159)`，
+    真幅面在索引 5/6，按位置取 0/1 会得到 0×13000mm 这种荒谬值。
+    """
+    import swlib_v2 as V
+    gw = [w for w in gws() if w["id"] == "drawing_delivery"][0]
+    acc = gw["real_acceptance_2022"]
+    assert "GetSize" in acc["sheet_size_api"], acc["sheet_size_api"]
+    w, h = acc["sheet_size_mm"]
+    assert 100 < w < 1200 and 100 < h < 900, \
+        "幅面应在合理区间（A4~A0），实得 %s×%s" % (w, h)
+    # 代码里必须真的用 GetSize
+    src = io.open(os.path.join(HERE, "swlib_v2.py"), encoding="utf-8").read()
+    assert '"GetSize"' in src or "'GetSize'" in src, "swlib_v2 未调用 ISheet.GetSize"
+    assert "def sheet_properties" in src and "def current_sheet" in src
+    return "%.1f×%.1f mm，走 GetSize" % (w, h)
+
+
+def t_declared_assertion_counts():
+    """★ golden 里 `assertions: N` 必须等于对应测试文件的实际 chk 数。
+
+    防的是"加了断言忘了改文档"。映射表显式写死，因为 workflow id 与
+    测试文件名不是机械对应（drawing_delivery → test_drawing_delivery.py）。
+    """
+    mapping = {
+        "drawing_delivery": "test_drawing_delivery.py",
+        "mesh_reference_import": "test_mesh_import.py",
+    }
+    bad = []
+    for w in gws():
+        wid = w.get("id")
+        fn = mapping.get(wid)
+        if not fn:
+            continue
+        acc = w.get("real_acceptance_2022", {})
+        if "assertions" not in acc:
+            continue
+        src = io.open(os.path.join(HERE, fn), encoding="utf-8").read()
+        actual = len(re.findall(r"^\s*chk\(", src, re.M))
+        if actual != acc["assertions"]:
+            bad.append("%s 声明 %d 实际 %d (%s)"
+                       % (wid, acc["assertions"], actual, fn))
+    assert not bad, "断言数不一致: %s" % bad
+    n = len([w for w in gws() if "assertions" in w.get("real_acceptance_2022", {})])
+    return "%d 个 workflow 断言数一致" % n
+
+
+def t_no_stale_pilot_claims():
+    """★ 不能把已升级的能力仍标成 pilot（反向：也不能把 pilot 写成 verified）。
+
+    golden 的 real_acceptance 里如果出现 "pilot" 字样，对应能力在 yaml 里
+    就必须真的是 pilot —— 防止升级后忘记改文档。
+    """
+    import capabilities_loader as CL
+    caps = CL.capabilities()
+    bad = []
+    for w in gws():
+        for cid in w.get("capabilities", []):
+            lvl = caps.get(cid, {}).get("level")
+            if lvl != "pilot":
+                continue
+            # pilot 能力出现在 golden 的 capabilities 里是允许的，但要显式标注
+        acc = w.get("real_acceptance_2022", {})
+        for k, v in acc.items():
+            if not isinstance(v, str):
+                continue
+            if "pilot" in v.lower():
+                # 该 workflow 里必须有对应的 pilot 能力
+                pilots = [c for c in w.get("capabilities", [])
+                          if caps.get(c, {}).get("level") == "pilot"]
+                if not pilots:
+                    bad.append((w["id"], k, v[:40]))
+    assert not bad, "声明 pilot 但 capabilities 里没有 pilot 项: %s" % bad
+    return "pilot 声明与能力表一致"
 
 
 print("=== Golden Workflow 校验套件 ===\n")
@@ -184,6 +302,10 @@ chk("★ belt_actuator 真实验收", t_belt_actuator_acceptance)
 chk("齿轮点数验收", t_gear_acceptance)
 chk("★ 三机制断言数一致", t_gates_acceptance)
 chk("不谎称跨版本", t_no_false_version_claims)
+chk("★ 工程图验收 = 代码", t_drawing_acceptance_matches_code)
+chk("★ 幅面走 GetSize", t_sheet_size_api_consistent)
+chk("★ 声明的断言数 = 实际", t_declared_assertion_counts)
+chk("pilot 声明与能力表一致", t_no_stale_pilot_claims)
 
 print()
 if fails:

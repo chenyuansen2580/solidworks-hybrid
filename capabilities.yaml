@@ -435,9 +435,12 @@ capabilities:
     verified_versions: ["2022 SP5"]
     dependencies: [SolidWorks, pywin32, 中文模板 gb.drwdot]
     limitations:
-      - 中文视图名 *等轴测/*前视，英文名恒 False
+      - 中文视图名 *等轴测/*前视，英文名恒 False（pitfalls S9）
       - CreateDrawViewFromModelView3 在 IDrawingDoc 上
-    evidence: "3 视图 PDF 12.7KB"
+      - 只出视图 + PDF；尺寸链/孔表/标题栏字段填充未实现（见 drawing-standards.md）
+      - GetViewCount 含 Sheet1，判据要用「视图数+1」
+      - 自动标注本轮增量常为 0（模型无驱动尺寸时），须回读 GetAnnotationCount
+    evidence: "3 视图 PDF 7130 B / views_made=3 / GetViewCount=4"
     allowed_modes: [interactive, reviewed]
 
   - id: gear.involute
@@ -462,7 +465,188 @@ capabilities:
     evidence: "r_min=rf r_max=ra"
     allowed_modes: [interactive, reviewed]
 
+  - id: gear.harmonic_profile
+    label: 谐波齿廓校核
+    level: verified
+    backends: [local-python]
+    verified_versions: ["2022 SP5"]
+    dependencies: [check_harmonic.py, assets/harmonic_profiles.json, numpy, shapely]
+    limitations:
+      - 只做**数据验收**，不重新推导齿廓（数据源 ctp-revB.js / Yao et al. 2025）
+      - 自交检查只抽查前 4000 点（完整 6600 段是 O(n²)），完整图形靠目视
+      - shapely 缺失时自交检查会抛，其余检查不受影响
+      - 不涉及 SW 建模；要出实体仍需走 gear.involute / gear.full_ring
+    evidence: "椭圆偏差 0.00e+00 / 传动比 100.0 精确 / 啮合 29 齿 14.5% / backlash 0.0164mm"
+    allowed_modes: [interactive, reviewed]
+
+  - id: gear.planetary_check
+    label: 行星轮系校核
+    level: verified
+    backends: [local-python]
+    verified_versions: ["2022 SP5"]
+    dependencies: [verify_all.py, gearmath.py]
+    limitations:
+      - 只做**解析几何与理论体积**校核（给 SW 实测提供独立基准），不建实体
+      - 齿廓用 gearmath 的多边形近似，不是 CNC 级精确齿形
+      - 旧版只打印不断言（数值错了也退出 0）；2026-11-22 已加真断言
+      - 侧隙只输出供参考，不作为 pass/fail 条件
+    evidence: "zr=zs+2zp / i=5.0 / 装配(30%3=0) / 邻接 58.4567>43.5 / 4 个正体积 + 中心距"
+    allowed_modes: [interactive, reviewed]
+
+  # ============================================================ 2026-11-21 新增
+  # 对标 wzyn20051216/solidworks-automation-skill（2230★）的 6 个缺口补全。
+  # 等级按本机实测证据定，绝不因为"对标工具有"就标 verified。
+
+  - id: review.run
+    label: 结果自审查（四视图+像素判据）
+    level: verified
+    backends: [local-python, solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [review.py, Pillow, numpy, swlib_v2.py]
+    limitations:
+      - 预览非空白 ≠ 模型正确；比例/方位/部件缺失/重叠悬空仍须人眼复核
+      - 像素判据只排除空白图/同图/裁切，不判断几何是否可制造
+      - 内容占比下限 1%、色数下限 6 是本机 1290x683 渲染实测值
+      - 背景色取出现最多的量化色，不假定纯白（本机背景是浅灰渐变）
+    evidence: "圆柱 4 视图 md5 互异 / 内容 5.6~24.2% / 色数 36~39 / status=pass"
+    allowed_modes: [interactive, reviewed]
+
+  - id: review.image_stats
+    label: 像素统计（内容占比/色数/贴边）
+    level: verified
+    backends: [local-python]
+    verified_versions: ["2022 SP5"]
+    dependencies: [review.py, Pillow, numpy]
+    limitations:
+      - 色数必须在原始分辨率上数，缩小图会把硬边插值成过渡色
+      - 贴边判定阈值 1%，只提示不阻断（WARN）
+    evidence: "空白图 content 0.000→FAIL / 单色块 colors=6→WARN / 贴边四边全检出"
+    allowed_modes: [interactive, reviewed]
+
+  - id: appearance.verify_readback
+    label: 设色后回读校验
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, swlib_v2.py]
+    limitations:
+      - GetMaterialPropertyValues2 返回 8bit 量化值，偏差恒约 0.002，tol 不能小于 0.01
+      - 未设过色时回读 (-1,-1,-1) 哨兵，语义是"继承零件外观"
+      - 只覆盖组件级；零件级 set_color 已有独立回读
+    evidence: "设 (0.92,0.72,0.30) 回读 (0.918,0.718,0.298) dev=0.0024；tol=1e-9 正确抛"
+    allowed_modes: [interactive, reviewed]
+
+  - id: appearance.palette
+    label: 批量上色+批量回读
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, swlib_v2.py]
+    limitations:
+      - strict=True 时首项失败即抛，后续不再尝试
+      - 键必须与 comps() 返回的实例名一致
+    evidence: "2 组件批量上色，applied=2 failed=0，全部回读命中"
+    allowed_modes: [interactive, reviewed]
+
+  - id: com.byref_out
+    label: by-ref 出参（VARIANT）
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [pywin32, swlib.py]
+    limitations:
+      - 早绑定 _ApplyTypes_ 不接受 VARIANT 形式 by-ref，会 TypeError
+      - 取真实出参必须降级动态绑定（swlib.as_dynamic / call_byref）
+      - 早绑定只能拿返回元组里的出参，且入参要传普通 0
+    evidence: "SaveAs4 合法路径 err=0；非法路径 err=1；非法扩展名 err=256"
+    allowed_modes: [interactive, reviewed]
+
+  - id: drawing.view_count
+    label: 工程图视图计数/枚举
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, swlib_v2.py]
+    limitations:
+      - GetViewCount() 把 Sheet1 也算一项（3 视图返回 4）
+      - GetViews() 返回嵌套元组，必须展平后按 GetName2 过滤掉 Sheet1
+    evidence: "3 视图 → GetViewCount=4；展平 4 项 [Sheet1, 视图1, 视图2, 视图3]"
+    allowed_modes: [interactive, reviewed]
+
+  - id: drawing.sheet_size
+    label: 图纸幅面读取
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, swlib_v2.py, swlib.py]
+    limitations:
+      - 必须用 ISheet.GetSize(Width, Height) 两个 by-ref 出参
+      - GetProperties 返回 7 项，真幅面在索引 5/6，按位置取 0/1 会得到 0×13000mm 荒谬值
+      - 返回单位是米，封装已换 mm
+      - 读不到时返回 None 字段而不抛异常（出图不该因读幅面失败中断）
+    evidence: "GetSize → 279.4 × 215.9 mm（11.00 × 8.50 in = Letter）"
+    allowed_modes: [interactive, reviewed]
+
+  - id: import.mesh
+    label: 网格导入（STL/OBJ 参考件）
+    level: pilot
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, mesh_import.py]
+    limitations:
+      - 网格件不是参数化实体：无草图/特征树，不能拉伸切除、不能加配合当机构件
+      - GetBodies2() 看不到网格体（返回 None），必须走 MeshBodyFeature.GetSpecificFeature2
+      - LoadFile4 第 3 参不能传 None，必须传空 IDispatch VARIANT
+      - GLB/GLTF/FBX 需先转 OBJ/STL（SW2022 无 glTF 导入器）
+      - 0 法线 STL 会让 SW 弹模态框并把 COM 永久挂死，必须预检
+      - 体积恒 0，不能用 volume_check 判据
+    evidence: "STL 20x30x40 bbox 偏差 0.000mm / mesh_bodies=1 / OBJ 12x8x6 同样精确"
+    allowed_modes: [interactive, reviewed]
+
+  - id: import.mesh_precheck
+    label: STL 法线预检/修复
+    level: verified
+    backends: [local-python]
+    verified_versions: ["2022 SP5"]
+    dependencies: [mesh_import.py]
+    limitations:
+      - 只查 STL（ASCII/二进制），OBJ 跳过
+      - 阈值 2%：坏法线面占比超过就拒绝导入
+      - repair 按体心朝外纠正绕向，凹形件的"朝外"可能判错
+    evidence: "12/12 坏法线 → 拒绝；修复后预检通过；二进制 STL 684B/12 面"
+    allowed_modes: [interactive, reviewed]
+
   # ============================================================ pilot
+  - id: drawing.annotations
+    label: 工程图自动标注
+    level: verified
+    backends: [solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [SolidWorks, pywin32, swlib_v2.py]
+    limitations:
+      - InsertModelAnnotations3 是 6 参（旧文档写 4 参是错的）
+      - ★ 只要 types 含 32768（swInsertDimensionsMarkedForDrawing）位就成功；不含的一律 0 条
+      - ★★ 同一张图纸重复调用不会再加标注，比较不同 types 必须每次新建图纸
+      - rc 不可信：rc=False 也可能插进去，rc=True 也可能 0 条 → 必须回读增量
+      - 模型必须已在会话里打开并激活
+      - 只插"模型已有的驱动尺寸"，无驱动尺寸的模型恒 0 条
+      - 尺寸链完整度仍需人判（自动标注≠尺寸链）
+    evidence: "9 组 types 每组新图纸：含 32768 全部 +1；8/524288 单独 0 条"
+    allowed_modes: [interactive, reviewed]
+
+  - id: drawing.standards_check
+    label: 工程图底线检查（机器判部分）
+    level: verified
+    backends: [local-python, solidworks-com-pywin32]
+    verified_versions: ["2022 SP5"]
+    dependencies: [drawing_delivery.py, swlib_v2.py]
+    limitations:
+      - 只判视图数/PDF 字节/标注增量三项
+      - 尺寸链/孔表/标题栏/压线四项显式标 manual，绝不默认 pass
+      - PDF 阈值 5KB 来自 3 视图无标注实测 7130 B
+    evidence: "4 项人判全部 manual / status 聚合 pass-warn-fail 正确"
+    allowed_modes: [interactive, reviewed]
+
   - id: part.hole_wizard
     label: 孔向导
     level: pilot
@@ -575,6 +759,33 @@ capabilities:
     allowed_modes: [reviewed]
 
   # ============================================================ not_implemented
+  - id: drawing.hole_table
+    label: 孔表/槽表
+    level: not_implemented
+    backends: []
+    verified_versions: []
+    dependencies: []
+    limitations:
+      - InsertHoleTable3(9参) / InsertHoleTable2(6参) / InsertHoleTable(5参) / InsertTableAnnotation2(7参) 全部返回 None
+      - 51 种参数组合实测：3 个 .sldholtbt 模板 × anchor 0~3 × tagorder 0~1 × tagtype 0~2 × 5 组坐标
+      - 已排除选择集问题：SelectByID 选中成功（sel=1）、GetSelectedObjectsDrawingView2 拿到视图对象
+      - 与 ThickenSheet 同类：接口层不可用，不是用法问题
+      - 变通：孔规格/数量写进自定义属性（props.custom 已验证）+ 交付附 CSV
+    evidence: "51/51 组合返回 None，标注总数恒 0"
+    allowed_modes: []
+
+  - id: drawing.title_block_fill
+    label: 标题栏字段填充
+    level: not_implemented
+    backends: []
+    verified_versions: []
+    dependencies: []
+    limitations:
+      - gb.drwdot 模板自带框线，但字段（件号/材料/比例）未自动填充
+      - 只能靠自定义属性 + 手工编辑图纸格式
+    evidence: "未实现"
+    allowed_modes: []
+
   - id: surface.thicken
     label: 曲面加厚
     level: not_implemented

@@ -1038,17 +1038,242 @@ def hole_wizard(m, sketch, hole_type=2, standard="ANSI Inch", fastener="",
     return f
 
 
-def insert_model_annotations(drawing, option=0, types=8, all_views=False,
-                             duplicate_dims=False):
-    """工程图自动插入模型标注（IDrawingDoc.InsertModelAnnotations3，4 参）。
+# 自动标注的类型位掩码（swInsertAnnotation_e，本机 SW2022 实测）
+ANN_DIM_MARKED = 32768        # swInsertDimensionsMarkedForDrawing  ★ 关键位
+ANN_DIM_NOT_MARKED = 524288   # swInsertDimensionsNotMarkedForDrawing
+ANN_DIM_BASIC = 8             # swInsertDimensions
+ANN_CENTERLINES = 2           # swInsertDatums
+ANN_CENTERMARKS = 4           # swInsertDatumTargets
+ANN_INSTANCE_COUNTS = 16      # swInsertInstanceCounts
+# ★★ 本机实测：**只要含 32768 位就成功**（32768 单独 / |524288 / |8 / |2 / |4 / |16 全部 +1）
+#    不含 32768 的一律 0 条（8 单独、524288 单独）
+ANN_WORKING = ANN_DIM_MARKED
 
-    ★ 前置铁律（REA kit 实测）：模型必须已在会话里【打开】，否则返回 True 但记 0 条。
-    types=8 是尺寸；可位或组合（8 尺寸 / 2 中心线 / 4 中心标记）。
+
+def insert_model_annotations(drawing, option=0, types=ANN_WORKING, all_views=False,
+                             duplicate_dims=False, hidden_feature_dims=False,
+                             use_placement_in_sketch=False):
+    """工程图自动插入模型标注（IDrawingDoc.InsertModelAnnotations3，**6 参**）。
+
+    ★ 签名来自类型库（api_lookup.py IDrawingDoc InsertModelAnnotations3）：
+        (Option, Types, AllViews, DuplicateDims, HiddenFeatureDims, UsePlacementInSketch)
+      旧版按 4 参调用 —— 少传两参会被 COM 补 Missing，部分组合下静默不插。
+
+    ★★ 2026-11-21 实测（60×40×15 带两孔板，**每组合都用全新图纸**）：
+
+       | types      | 组成                    | rc    | 增量 |
+       |------------|-------------------------|-------|------|
+       | 8          | swInsertDimensions      | False | 0    |
+       | **32768**  | **MarkedForDrawing**    | **True** | **+1** |
+       | 524288     | NotMarkedForDrawing     | False | 0    |
+       | 32768\\|524288 | 两者                | True  | +1   |
+       | 32768\\|8   | +尺寸                   | True  | +1   |
+       | 32768\\|2/4/16 | +中心线/标记/计数    | True  | +1   |
+
+       **结论：只要 types 含 32768 位就成功**；不含的一律 0 条。
+       默认值 = `ANN_WORKING` = 32768。
+
+    ★★★ 关键陷阱（差点得出错误结论）：**同一张图纸上重复调用不会再加标注**。
+       第一次调 32768 插了 1 条后，后续任何 types 都是"0 增量" ——
+       我最初在一张图纸上连着试 8 个组合，于是错误地以为"只有 557056 能用"。
+       必须**每个组合都新建图纸**，否则测量的是"这张图还能不能加"而不是"这个参数行不行"。
+       同理 `insert_model_annotations_checked` 的重试逻辑也只能用于"换视图再试"，
+       不能用于"换参数再试"。
+
+    ★ 前置铁律（REA kit 实测）：模型必须已在会话里【打开】。
+    ★ 判据：只能看 `IView.GetAnnotationCount()` / `GetDisplayDimensionCount()`
+      的**增量** —— rc=True 也可能 0 条，rc=False 也可能插进去了。
     """
     dd = wrap(drawing, "IDrawingDoc")
-    rc = dd.InsertModelAnnotations3(int(option), int(types),
-                                    bool(all_views), bool(duplicate_dims))
+    rc = dd.InsertModelAnnotations3(int(option), int(types), bool(all_views),
+                                    bool(duplicate_dims),
+                                    bool(hidden_feature_dims),
+                                    bool(use_placement_in_sketch))
     return bool(rc)
+
+
+def insert_model_annotations_checked(drawing, option=0, types=ANN_WORKING,
+                                     all_views=True, duplicate_dims=False,
+                                     hidden_feature_dims=False,
+                                     use_placement_in_sketch=False,
+                                     retries=2):
+    """插标注 + **回读增量**判成败（返回结构化结果，不靠返回值）。
+
+    返回 {"ok", "before", "after", "added", "rc", "types", "tries"}。
+
+    ★★ 重试只用于「换视图再试」，**不能用于换参数再试**：
+      同一张图纸上重复调用 InsertModelAnnotations3 不会再加标注（本机实测），
+      所以拿一张图连试多个 types 会得出"全都失败"的错误结论。
+      要比较不同 types，必须每次新建图纸（见 probe_annotations.py）。
+    """
+    before = drawing_annotation_total(drawing)
+    rep = {"types": int(types), "before": before, "tries": []}
+    for attempt in range(max(1, retries)):
+        allv = all_views if attempt == 0 else False
+        try:
+            rc = insert_model_annotations(drawing, option, types, allv,
+                                          duplicate_dims, hidden_feature_dims,
+                                          use_placement_in_sketch)
+        except Exception as e:
+            rc = None
+            rep["tries"].append({"all_views": allv, "rc": None,
+                                 "error": str(e)[:100]})
+            continue
+        after = drawing_annotation_total(drawing)
+        rep["tries"].append({"all_views": allv, "rc": rc, "after": after})
+        if after > before:
+            rep.update(ok=True, rc=rc, after=after, added=after - before)
+            return rep
+        # 没插进去 → 逐视图再试
+        if allv:
+            for iv in drawing_views(drawing):
+                try:
+                    com_member(wrap(drawing, "IDrawingDoc"), "ActivateView",
+                               com_member(iv, "GetName2", default=""))
+                    insert_model_annotations(drawing, option, types, False,
+                                             duplicate_dims, hidden_feature_dims,
+                                             use_placement_in_sketch)
+                except Exception:
+                    continue
+            after = drawing_annotation_total(drawing)
+            if after > before:
+                rep.update(ok=True, rc=rc, after=after, added=after - before)
+                return rep
+    rep.update(ok=False, rc=None, after=drawing_annotation_total(drawing),
+               added=drawing_annotation_total(drawing) - before)
+    return rep
+
+
+def drawing_view_count(drawing):
+    """工程图里视图个数（IDrawingDoc.GetViewCount，0 参 → VT_I4）。"""
+    try:
+        return int(wrap(drawing, "IDrawingDoc").GetViewCount())
+    except Exception:
+        return None
+
+
+def drawing_views(drawing):
+    """工程图里所有 IView 列表（IDrawingDoc.GetViews，0 参 → VT_VARIANT）。
+
+    ★ 本机返回是**嵌套元组**：`((Sheet1, 视图1, 视图2, 视图3),)` ——
+      外层是"图纸"，内层才是视图；而且第 0 项是 ISheet 不是 IView。
+      旧版直接 `for v in arr` 会拿到一个元组，`wrap` 后所有成员都报
+      "'tuple' object has no attribute ..."。这里展平并按 GetName2 过滤。
+    """
+    try:
+        arr = wrap(drawing, "IDrawingDoc").GetViews()
+    except Exception:
+        return []
+    flat = []
+
+    def _walk(x, depth=0):
+        if depth > 3 or x is None:
+            return
+        if isinstance(x, (list, tuple)):
+            for y in x:
+                _walk(y, depth + 1)
+            return
+        flat.append(x)
+
+    _walk(arr)
+    out = []
+    for v in flat:
+        try:
+            iv = wrap(v, "IView")
+            if com_member(iv, "GetName2", default=None):
+                out.append(iv)
+        except Exception:
+            continue
+    return out
+
+
+def view_annotation_count(view):
+    """某个视图上的标注条数（IView.GetAnnotationCount，0 参 → VT_I4）。
+
+    ★ 这是「自动标注到底插进去没有」的唯一可信判据：
+      InsertModelAnnotations3 返回 True 也可能 0 条（模型没打开/尺寸被抑制）。
+    """
+    try:
+        return int(wrap(view, "IView").GetAnnotationCount())
+    except Exception:
+        return None
+
+
+def drawing_annotation_total(drawing):
+    """全图标注总数（逐视图累加）。"""
+    n = 0
+    for v in drawing_views(drawing):
+        c = view_annotation_count(v)
+        if c:
+            n += c
+    return n
+
+
+def current_sheet(drawing):
+    """当前图纸对象 ISheet（IDrawingDoc.GetCurrentSheet，0 参 → VT_DISPATCH）。"""
+    try:
+        s = wrap(drawing, "IDrawingDoc").GetCurrentSheet()
+        return wrap(s, "ISheet") if s is not None else None
+    except Exception:
+        return None
+
+
+def sheet_properties(drawing):
+    """图纸幅面 → dict(width_mm, height_mm, paper_size, scale_num, scale_den, raw)。
+
+    ★★ 2026-11-21 实测修正（两次错）：
+      ① 旧版直接 `return GetCurrentSheet()` 却叫 sheet_properties —— 名实不符，
+         返回的是 ISheet 对象，根本不是属性。
+      ② 改成调 `ISheet.GetProperties()` 后按位置取前两项，**取错了**：
+         本机返回 7 项 `(0.0, 13.0, 1.0, 1.0, 1.0, 0.2794, 0.2159)`，
+         真正幅面在**索引 5/6**（0.2794×0.2159 m = 11×8.5 in = Letter），
+         前两项是别的含义。按位置猜索引靠不住。
+
+    ★ 正确做法：用 `ISheet.GetSize(Width, Height)` ——
+      签名 `(VT_R8* Width, VT_R8* Height) → VT_I4`，两个 **by-ref 出参**，
+      正好用上 `swlib.call_byref`。这是官方语义明确的幅面读取接口。
+
+    `GetProperties` 的 raw 仍保留在返回值里供排查，但不再据此判幅面。
+    读不到时返回 None 字段，不抛异常（出图不该因读幅面失败而中断）。
+    """
+    import swlib as L
+    out = {"width_mm": None, "height_mm": None, "paper_size": None,
+           "scale_num": None, "scale_den": None, "raw": None}
+    sh = current_sheet(drawing)
+    if sh is None:
+        return out
+
+    # ① 幅面尺寸：GetSize 两个 by-ref 出参（权威）
+    try:
+        ret, outs = L.call_byref(sh, "GetSize", [], ["r8", "r8"])
+        w, h = (outs[0], outs[1]) if outs else (None, None)
+        if w and h:
+            out["width_mm"] = round(float(w) * 1000.0, 2)
+            out["height_mm"] = round(float(h) * 1000.0, 2)
+            out["paper_size"] = int(ret) if isinstance(ret, int) else None
+    except Exception:
+        # 早绑定兜底：出参位置传 0.0，从返回元组拆
+        try:
+            ret = sh.GetSize(0.0, 0.0)
+            r, outs = L.split_out(ret, 2)
+            if outs[0] and outs[1]:
+                out["width_mm"] = round(float(outs[0]) * 1000.0, 2)
+                out["height_mm"] = round(float(outs[1]) * 1000.0, 2)
+        except Exception:
+            pass
+
+    # ② 比例：GetProperties 的索引 2/3（本机实测稳定）
+    try:
+        p = sh.GetProperties()
+        if isinstance(p, (list, tuple)):
+            out["raw"] = [round(float(x), 6) if isinstance(x, (int, float)) else x
+                          for x in p]
+            if len(p) >= 4:
+                out["scale_num"] = float(p[2])
+                out["scale_den"] = float(p[3])
+    except Exception:
+        pass
+    return out
 
 
 def create_section_view_at(drawing, x, y, z, label="A", options=0,
@@ -1610,14 +1835,67 @@ def set_appearance_by_material(m, material="ABS"):
     return set_material(m, material)
 
 
-def set_component_color(comp, rgb, config_opt=1, finish=None):
-    """设置装配体中**组件级**颜色（在装配体里可见的颜色）。
+def get_component_color(comp, config_opt=1):
+    """读回组件级颜色 (r,g,b)。
+
+    ★ 类型库实测：`IComponent2.GetMaterialPropertyValues2(Config_opt, Config_names)`
+      返回 VT_VARIANT 的 9 元素 double 数组（R,G,B,Ambient,Diffuse,Specular,
+      Shininess,Transparency,Emission）。只取前 3 项。
+    ★ 早绑定下返回可能是 (数组,) 或裸数组，两种都兼容。
+    ★ 组件未设过自定义颜色时返回 **(-1.0, -1.0, -1.0)** 哨兵值（本机实测），
+      表示"继承零件外观"，不是真颜色。调用方判断"有没有设过色"要看它。
+    失败返回 None。
+    """
+    c2 = wrap(comp, "IComponent2")
+    for args in ((int(config_opt), None), (int(config_opt),), ()):
+        try:
+            v = c2.GetMaterialPropertyValues2(*args)
+        except Exception:
+            continue
+        if isinstance(v, (list, tuple)) and len(v) == 1 and \
+                isinstance(v[0], (list, tuple)):
+            v = v[0]                       # 拆掉早绑定的外层元组
+        if isinstance(v, (list, tuple)) and len(v) >= 3:
+            try:
+                return tuple(float(x) for x in v[:3])
+            except Exception:
+                continue
+    return None
+
+
+def color_dev(a, b):
+    """两个 RGB 的最大分量偏差（0.0~1.0）。任一为 None 返回 None。"""
+    if not a or not b:
+        return None
+    return max(abs(float(x) - float(y)) for x, y in zip(a[:3], b[:3]))
+
+
+def is_unset_color(rgb):
+    """判断回读值是不是「未设色」哨兵 (-1,-1,-1)。
+
+    ★ 本机实测：组件没设过自定义颜色时 GetMaterialPropertyValues2 返回
+      (-1.0, -1.0, -1.0)，语义是"继承零件/装配默认外观"。
+      拿它去和期望色比偏差恒为 1.0+，必须单独识别，否则误报"颜色未生效"。
+    """
+    return bool(rgb) and all(abs(float(x) + 1.0) < 1e-6 for x in rgb[:3])
+
+
+def set_component_color(comp, rgb, config_opt=1, finish=None,
+                        verify=True, tol=0.02, retries=2):
+    """设置装配体中**组件级**颜色，设完**立刻回读比对**。
 
     ★ 三个坑（本机实测）：
       1) `SetMaterialPropertyValues2` 在 **IComponent2** 上，3 参
          (Material_values, Config_opt, Config_names)
       2) 数组必须 **9 元素** + `VARIANT(VT_ARRAY|VT_R8)`，裸 list 报类型不匹配
-      3) 返回 None 是正常的（void），不要用返回值判成败
+      3) 返回 None 是正常的（void），**不能用返回值判成败** —— 必须回读
+
+    ★★ 2026-11-21 新增回读（对标 wzyn 的 verify_appearance）：
+      设完立刻 `get_component_color()` 比对，任一通道偏差 > tol（默认 2%）抛异常。
+      旧版设完就返回，颜色没生效（组件被覆盖/配置不匹配）也无从发现。
+
+    verify=False 可关闭回读（批量上色时想自己聚合错误用）。
+    返回回读到的 (r,g,b)。
     """
     r, g, b = [max(0.0, min(1.0, float(c))) for c in rgb]
     rest = list(finish) if finish else [1.0, 0.7, 0.0, 0.4, 0.0, 0.0]
@@ -1627,7 +1905,50 @@ def set_component_color(comp, rgb, config_opt=1, finish=None):
     arr = win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, vals)
     c2 = wrap(comp, "IComponent2")
     c2.SetMaterialPropertyValues2(arr, int(config_opt), None)
-    return (r, g, b)
+    if not verify:
+        return (r, g, b)
+    got = None
+    for _ in range(max(1, retries)):
+        got = get_component_color(comp, config_opt)
+        if got is not None and color_dev(got, (r, g, b)) <= tol:
+            return got
+        time.sleep(0.1)
+    if got is None:
+        raise RuntimeError("set_component_color 后回读失败（GetMaterialPropertyValues2 返回空）")
+    raise RuntimeError(
+        "组件颜色未生效：期望 (%.3f, %.3f, %.3f) 实得 (%.3f, %.3f, %.3f)，"
+        "最大偏差 %.3f > tol %.3f"
+        % (r, g, b, got[0], got[1], got[2], color_dev(got, (r, g, b)), tol))
+
+
+def apply_palette(comps, palette, config_opt=1, tol=0.02, strict=True):
+    """批量设色 + 批量回读（对标 wzyn 的 apply_component_palette）。
+
+    comps   : {键: IComponent2} 或 [IComponent2, ...]
+    palette : {键: (r,g,b)}；列表形式时按索引对应
+    strict  : True=任一项失败抛异常；False=收集到 results 里继续
+
+    返回 {"ok": [...], "failed": [{"key","want","got","error"}], "applied": n}
+    """
+    items = list(comps.items()) if isinstance(comps, dict) else \
+        list(enumerate(comps))
+    ok, failed = [], []
+    for key, comp in items:
+        want = palette.get(key) if isinstance(palette, dict) else \
+            (palette[key] if isinstance(key, int) and key < len(palette) else None)
+        if want is None:
+            continue
+        try:
+            got = set_component_color(comp, want, config_opt=config_opt, tol=tol)
+            ok.append({"key": key, "want": tuple(round(float(x), 3) for x in want),
+                       "got": tuple(round(float(x), 3) for x in got)})
+        except Exception as e:
+            failed.append({"key": key,
+                           "want": tuple(round(float(x), 3) for x in want),
+                           "got": None, "error": str(e)[:140]})
+            if strict:
+                raise
+    return {"ok": ok, "failed": failed, "applied": len(ok)}
 
 
 def verify(m, volume=None, bbox=None, bodies=None, vol_tol=0.005, bbox_tol=0.5, tag=""):
@@ -2226,12 +2547,16 @@ def set_view(sw, m, which="iso", zoom_factor=1.0):
 
 
 def save_png(sw, m, path, which="iso", w=1400, h=900, min_bytes=1000,
-             fit=False, margin=0.15):
+             fit=False, margin=0.15, retries=3):
     """切视图→截图→回读大小；0 字节或过小视为失败。
 
     ★ 本机实测：`SaveAs3` 不支持指定像素尺寸，w/h 无法生效（保留仅作记录）。
     ★ 装配体出图传 `fit=True`：用 bbox 框选（margin 控制留白），
       比 ViewZoomtofit2 更紧凑，能显著提升画面占比。
+    ★★ 冷启/刚建完特征后第一次 `SaveAs3` 会返回 rc=1 + 0 字节（2026-11-21 实测）：
+       SW 视口还没画完，重切视图 + `GraphicsRedraw2` + 短暂等待后重试即可成功。
+       旧版直接抛异常，于是 review/four_views 把"冷启抖动"误判成"截图失败"。
+       现在内置 retries 次重试，全部失败才抛。
     """
     d = set_view(sw, m, which)
     if fit:
@@ -2239,11 +2564,24 @@ def save_png(sw, m, path, which="iso", w=1400, h=900, min_bytes=1000,
             zoom_to_model(sw, m, margin=margin)
         except Exception:
             pass
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    rc = d.SaveAs3(path, 0, 0)
-    sz = os.path.getsize(path) if os.path.exists(path) else 0
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    rc, sz = None, 0
+    for attempt in range(max(1, int(retries))):
+        rc = d.SaveAs3(path, 0, 0)
+        sz = os.path.getsize(path) if os.path.exists(path) else 0
+        if sz >= min_bytes:
+            break
+        # 抖动重试：重切视图 + 重绘 + 让 SW 喘口气
+        try:
+            d.ShowNamedView2(VIEW_NAME[which], VIEW[which])
+            d.ViewZoomtofit2()
+            d.GraphicsRedraw2()
+        except Exception:
+            pass
+        time.sleep(0.6 * (attempt + 1))
     if sz < min_bytes:
-        raise RuntimeError("截图失败/空白: %s rc=%s size=%d" % (path, rc, sz))
+        raise RuntimeError("截图失败/空白: %s rc=%s size=%d（已重试 %d 次）"
+                           % (path, rc, sz, retries))
     return dict(path=path, rc=rc, size=sz, view=which, fit=fit,
                 size_note="SaveAs3 不支持自定义分辨率，w/h 未生效")
 

@@ -19,20 +19,23 @@
 
 ## 能做什么
 
-**建模（38 项 verified / 10 pilot / 3 not_implemented）**
+**建模（50 项 verified / 11 pilot / 5 not_implemented）**
 
 - 基础特征：拉伸、切除（贯穿/盲孔）、旋转、放样、扫描、抽壳
 - 修饰：圆角、倒角、圆周阵列、镜像、拔模等效
 - 专用：钣金基体法兰、曲面（拉伸/平面/旋转）、结构件焊件、偏移基准面
 - 专业：渐开线齿轮整环齿廓、谐波变形、样条
 - 装配：bbox 摆位、固定、同心/距离/重合配合、干涉检查
-- 出图：四视图、工程图、PDF、STEP
+- 出图：四视图、工程图、PDF、STEP、视图计数、图纸底线检查
+- 外观：设色回读校验、批量上色
+- 导入：STL/OBJ 网格参考件（含法线预检）
 
-**三个机制（防假成功）**
+**四个机制（防假成功）**
 
 - **交付新鲜度**：SHA-256 基线，旧文件不能冒充本轮成果
 - **能力缺口**：不会的能力返回结构化替代方案 + 探测建议
 - **执行 Trace**：每步留痕，失败带 `fail_at` 源码定位
+- **结果自审查**：四视图 md5 + 像素判据，拦空白图/同图/裁切/0 字节
 
 ## 快速开始
 
@@ -55,20 +58,16 @@ V.save_checked(m, r"C:\temp\cyl.SLDPRT")
 ## 自检
 
 ```bash
-python scripts/run_all.py --static   # 约 1 秒，不开 SW ★ 每次改完先跑（8 项）
-python scripts/run_all.py --quick    # 约 10 分钟，日常够用（8 静态 + 5 SW）
-python scripts/run_all.py            # 约 14 分钟，全量（8 静态 + 11 SW）
+python scripts/run_all.py --static   # 约 3 秒，不开 SW ★ 每次改完先跑（11 项）
+python scripts/run_all.py --quick    # 约 27 分钟，日常够用（11 静态 + 10 SW）
+python scripts/run_all.py            # 约 40 分钟，全量（11 静态 + 15 SW）
 python scripts/run_all.py --force    # 强制重跑
 ```
 
 | 层 | 套件 |
 |---|---|
-| 静态 | compile / caps / gate / freshness / gap / docs / golden / trace(离线部分) |
-| SW | smoke / features / draft / sheetmetal / props / surface / motion / assembly / doctest / capcheck / trace(含真机建模) |
-
-静态层**不需要 Windows、不需要 pywin32、不开 SW**：能力表在 import 失败时回退
-`capabilities.yaml`（`capabilities_loader` 自带 mini 解析器），文档引用用 AST 静态解析，
-需真机的用例标 SKIP 而不计失败。因此 Linux / CI 上也能拿到完整的静态回归结论。
+| 静态 | compile / caps / gate / freshness / gap / docs / golden / apilookup / harmonic / planetary / trace(离线) |
+| SW | smoke / features / draft / sheetmetal / props / surface / motion / assembly / doctest / capcheck / trace / review / appearance / drawing / mesh |
 
 ## 子技能
 
@@ -83,8 +82,8 @@ python scripts/run_all.py --force    # 强制重跑
 
 ## 单一真相源
 
-- **[capabilities.yaml](capabilities.yaml)** — 51 项能力：等级 / 限制 / 依赖 / 版本 / 允许模式
-- **[golden-workflows.yaml](golden-workflows.yaml)** — 8 个标准真机工作流：输入 / 产出 / 验收数值
+- **[capabilities.yaml](capabilities.yaml)** — 63 项能力：等级 / 限制 / 依赖 / 版本 / 允许模式
+- **[golden-workflows.yaml](golden-workflows.yaml)** — 9 个标准真机工作流：输入 / 产出 / 验收数值
 
 代码从 yaml 加载，文档数字由 `test_doc_consistency.py` 校验，手写数字会红。
 
@@ -95,15 +94,15 @@ SKILL.md                  主入口：8 条铁律 + 核心 API + 路由 + 门禁
 SUBSKILLS.md              子技能矩阵
 capabilities.yaml         能力清单（单一真相源）
 golden-workflows.yaml     标准真机验收工作流
-references/              11 个参考文档（176 条踩坑 / API / 案例 / 三机制）
-scripts/                  29 个脚本（106 函数核心库 + 18 套件 + 三机制）
+references/              12 个参考文档（211 条踩坑 / API / 图纸底线 / 案例 / 四机制）
+scripts/                  38 个脚本（120+ 函数核心库 + 23 套件 + 四机制）
 subskills/                4 个子技能 × 3 文件
 assets/harmonic_profiles.json  谐波齿廓点集
 ```
 
 ## 八条铁律
 
-1. **不猜 API** — 长参数方法先 grep 类型库
+1. **不猜 API** — 长参数方法先 python scripts/api_lookup.py 接口 方法
 2. **不造轮子** — 先读 references/ 和 scripts/
 3. **不瞎试** — 同一问题 2 次未通就查 pitfalls，再查 GitHub
 4. **每步验证** — 判 None 不判真，体积+bbox+实体数三重断言

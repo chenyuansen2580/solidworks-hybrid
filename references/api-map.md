@@ -2,6 +2,25 @@
 
 > 凭记忆写 COM 接口必翻车。下表全部来自 `grep "def 名" 类型库`。
 
+## ★★ 遇到表里没有的 API：先跑查证工具，别猜
+
+```bash
+python scripts/api_lookup.py IFeatureManager HoleWizard5   # 精确签名 + 每参 VT + by-ref
+python scripts/api_lookup.py HoleWizard5                   # 自动定位接口
+python scripts/api_lookup.py --find HoleWizard             # 模糊搜方法名
+python scripts/api_lookup.py --task "画一个渐开线齿轮"      # 中文任务 → 候选能力/方法
+python scripts/api_lookup.py --list                        # 列出全部 467 个接口
+python scripts/api_lookup.py IDrawingDoc InsertModelAnnotations3 --json
+```
+
+它直接读类型库 `%TEMP%\gen_py\3.12\83A33D31-...x0x30x0.py`，输出：
+参数个数、每参数 **VT 类型**（I4/R8/BSTR/DISPATCH/SAFEARRAY）、**方向**（in / out(byref)）、
+返回值类型、`invoke id`、返回接口名，以及 `capabilities.yaml` / 本文件的旁证命中。
+
+**它已经抓出两条旧文档的错**（2026-11-21）：
+- `InsertModelAnnotations3` 是 **6 参**（旧文档写 4 参）
+- `LoadFile4` 在 **ISldWorks** 上（不是 IModelDoc2），且第 3 参是 VT_DISPATCH
+
 ## 一、接口归属（最容易搞错的）
 
 | API | 真实宿主 | 不在 |
@@ -29,6 +48,12 @@
 | `GetTitle` | **IModelDoc2** | IAssemblyDoc / IPartDoc |
 | `SaveAs2` / `SaveAs3` | **IModelDoc2** | IDrawingDoc / IAssemblyDoc |
 | `GetSurface().IsCylinder` | **ISurface 的「属性」** | 不是方法，`()` 调用会报 bool 不可调 |
+| `LoadFile4`（网格导入） | **ISldWorks** | IModelDoc2 / IPartDoc |
+| `GetViewCount` / `GetViews` / `InsertModelAnnotations3` | **IDrawingDoc** | IModelDoc2 / IView |
+| `GetAnnotationCount` | **IView**（也见 IModelDocExtension） | IDrawingDoc |
+| `GetMaterialPropertyValues2` / `SetMaterialPropertyValues2` | **IComponent2**（3 参） | IModelDoc2 |
+| `GetBodies3` | **IComponent2** | IPartDoc（只有 GetBodies2） |
+| `GetMeshBody` / `IsMeshBody` | **IBody2** | IFeature（网格体从 MeshBodyFeature.GetSpecificFeature2 取） |
 
 ### 参数签名陷阱（本机实测）
 
@@ -225,3 +250,41 @@ dim.SetToleranceValues(0.0002, -0.0001)   # 单位米；Full Name 形如 'D1@草
 `CloseDoc / InsertSketch / ClearSelection2 / ShowNamedView2 / ViewZoomtofit2` 等
 在 comtypes 动态层若 `len(argtypes)==0` 会被跳过而不报错 → 表现为"调用没生效"。
 pywin32 早绑定一般正常，但遇到"调用静默无效果"时优先怀疑此类，改用带占位参数或换接口。
+
+## 七、by-ref 出参（★ 2026-11-21 实测，两条通路差异）
+
+| API | 出参 | 早绑定写法 | 动态绑定写法 |
+|---|---|---|---|
+| `IModelDoc2.SaveAs4` | Errors, Warnings | `d.SaveAs4(p,0,0,0,0)` → `(True,0,0)` | `call_byref` → `err.value` |
+| `ISldWorks.LoadFile4` | Errors | 同左 | 同左 |
+
+```python
+import swlib as L
+# ① 早绑定：VARIANT 会 TypeError，只能传普通 0，出参从返回元组拆
+ret = d.SaveAs4(path, 0, 0, 0, 0)      # (True, 0, 0)
+r, outs = L.split_out(ret, 2)          # (True, [0, 0])
+
+# ② 动态绑定：能拿真实错误码
+ret, outs = L.call_byref(m, "SaveAs4", [path, 0, 0], ["i4", "i4"])
+# 目录不存在 → (False, [1, 0])；扩展名非法 → (False, [256, 0])
+```
+
+★ 早绑定 `_ApplyTypes_` 把 `(16387, 3)` 当 int 解包传给 `InvokeTypes`，
+VARIANT 对象不是 int → `TypeError: int() argument ... not 'VARIANT'`。
+★ pywin32 的 VARIANT 不暴露 `.vt`，用 `L.variant_vt(v)` 从 repr 解。
+
+## 八、工程图计数/枚举（★ 2026-11-21 实测）
+
+```python
+V.drawing_view_count(dw)     # GetViewCount() → 4（3 视图 + Sheet1）
+V.drawing_views(dw)          # GetViews() 嵌套元组展平，过滤掉 Sheet1
+V.view_annotation_count(v)   # IView.GetAnnotationCount() → 该视图标注条数
+V.drawing_annotation_total(dw)  # 全图累加
+V.insert_model_annotations(dw, 0, 8, True, False, False, False)  # ★ 6 参
+```
+
+| 坑 | 表现 |
+|---|---|
+| `GetViewCount()` 含 Sheet1 | 3 视图返回 4，判据要 `== views_made + 1` |
+| `GetViews()` 嵌套元组 | `((Sheet1, v1, v2, v3),)`，直接迭代拿到元组 |
+| `InsertModelAnnotations2` 返回 True 但 0 条 | 判据只能看 `GetAnnotationCount` 增量 |

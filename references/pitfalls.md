@@ -681,3 +681,265 @@ V.weldment_cut_list_table(m)  # 插表格（PILOT，位置不可控）
 
 **结论**：维持 PILOT。但封装**会抛明确 RuntimeError**，不是静默失败 —— 这点已保证。
 要打孔请用普通贯穿切除（`cut_checked`），已验证 0.000% 精确。
+
+---
+
+## T. 出图审查 / 网格导入 / by-ref / 标注（2026-11-21 补 6 缺口实战，14 条新坑）
+
+### T1 ★★ 0 法线 STL 会让 SW 弹模态框，把 COM 永久挂死
+
+**现象**：自己生成的测试 STL 里 `facet normal` 全写 `0 0 0`。
+`sw.LoadFile4(...)` 调用后**永不返回**，Python 进程卡住 10 分钟以上，
+只能 `taskkill /F /IM SLDWORKS.exe`。SW 界面停在弹窗：
+
+> SOLIDWORKS —— 在文件发现面之一有面法线问题，请检查 STL 文件。
+
+**根因**：这是**模态对话框**。模态框不点掉，SW 主线程不处理后续 COM 调用，
+`InvokeTypes` 就一直阻塞。`try/except` 兜不住 —— 它根本不抛异常，是挂住。
+
+**修法**：导入前**必须自己预检法线**，不能靠事后捕获：
+```python
+import mesh_import as MI
+pc = MI.precheck_stl(path)     # {"ok": False, "bad": 12, "total": 12, "reason": "..."}
+if not pc["ok"]:
+    path, st = MI.repair_stl_normals(path)   # 按体心朝外重算
+```
+`import_mesh(precheck=True)` 是默认行为；`auto_repair=True` 会自动修。
+生成 STL 时法线必须由叉积算出并归一化，绕向用「法线·(面心−体心) > 0」纠正。
+
+**推广**：任何会触发 SW 弹窗的输入（坏 STL、坏 DXF、缺字体、许可提示）
+都必须**在调用前拦截**。COM 自动化的 try/except 对模态框无效。
+
+### T2 ★★ 早绑定 `_ApplyTypes_` 不接受 VARIANT 形式的 by-ref 参数
+
+**现象**：
+```python
+d.SaveAs4(path, 0, 0, VARIANT(VT_BYREF|VT_I4, 0), VARIANT(VT_BYREF|VT_I4, 0))
+# TypeError: int() argument must be a string, a bytes-like object or a real
+#            number, not 'VARIANT'
+```
+
+**根因**：gen_py 生成的 `_ApplyTypes_(dispid, wFlags, retType, argTypes, ...)`
+把 `argTypes` 里的 `(16387, 3)`（= VT_I4|VT_BYREF + out）当 **int 解包**后
+直接传给 `InvokeTypes`，而 `VARIANT` 对象不是 int。
+
+**三条通路实测对比**（SaveAs4，非法路径 `Z:\no_such_dir\x.SLDPRT`）：
+
+| 写法 | 返回 | 能拿到错误码吗 |
+|---|---|---|
+| 早绑定 + 普通 `0` | `(False, 1, 0)` | ✓ 元组里有 |
+| 早绑定 + `VARIANT(VT_BYREF...)` | **TypeError** | ✗ 直接炸 |
+| **动态绑定 + `VARIANT(VT_BYREF...)`** | `False` + `err.value == 1` | ✓ 真出参 |
+
+**修法**（`swlib.call_byref` 已封装）：
+```python
+import swlib as L
+ret, outs = L.call_byref(m, "SaveAs4", [path, 0, 0], ["i4", "i4"])
+# 合法 → (True, [0, 0])；目录不存在 → (False, [1, 0])；扩展名非法 → (False, [256, 0])
+```
+`L.as_dynamic(obj)` 用 `win32com.client.dynamic.Dispatch(obj._oleobj_)` 降级。
+
+★ pywin32 的 `VARIANT` **不暴露 `.vt`**，读类型位只能 `L.variant_vt(v)`
+（从 `repr` 里正则取，形如 `win32com.client.VARIANT(16387, 7)`）。
+
+### T3 ★ `InsertModelAnnotations3` 是 6 参，不是 4 参
+
+**旧文档写的 4 参**：`(Option, Types, AllViews, DuplicateDims)` —— **错的**。
+
+类型库实测（`python api_lookup.py IDrawingDoc InsertModelAnnotations3`）：
+```
+(Option, Types, AllViews, DuplicateDims, HiddenFeatureDims, UsePlacementInSketch)
+```
+少传两参会被 COM 补 Missing，部分组合下**静默不插**。
+
+**更狠的一条**：`InsertModelAnnotations2` 在本机会**返回 True 但标注数 0**。
+所以判据只能是 `IView.GetAnnotationCount()` 的**增量**，不是返回值、也不是总数：
+
+| 场景 | rc | before | after | added | 正确判定 |
+|---|---|---|---|---|---|
+| 60×40×15 带两孔板 | False | 2 | 2 | **0** | WARN（模型自带 2 条，本轮没插） |
+| 若只看总数 | — | — | 2 | — | ✗ 误判 PASS |
+
+### T4 ★ `IDrawingDoc.GetViews()` 返回嵌套元组
+
+**现象**：
+```python
+arr = wrap(dw, "IDrawingDoc").GetViews()
+for v in arr:
+    wrap(v, "IView").GetName2()
+# AttributeError: 'tuple' object has no attribute 'GetName2'
+```
+
+**根因**：返回是 `((Sheet1, 视图1, 视图2, 视图3),)` —— 外层"图纸"，内层视图。
+而且**第 0 项是 ISheet 不是 IView**。
+
+**修法**（`V.drawing_views` 已封装）：递归展平 → 逐个 `wrap(..., "IView")`
+→ 用 `GetName2()` 非空过滤掉 Sheet1。
+
+### T5 ★ `GetViewCount()` 把 Sheet1 也算一项
+
+3 个模型视图 → `GetViewCount()` 返回 **4**。判据写 `>=3` 时要知道这个 +1 偏移，
+否则"只有 2 个视图"（=3）也会通过。正确断言：`count == views_made + 1`。
+
+### T6 ★ `GetMaterialPropertyValues2` 未设色时返回 (-1,-1,-1) 哨兵
+
+**现象**：新插入的组件读色得到 `(-1.0, -1.0, -1.0)`。
+拿它和期望色比偏差恒 >1.0，会把"还没设色"误判成"设色失败"。
+
+**语义**：`(-1,-1,-1)` = 继承零件/装配默认外观，不是真颜色。
+判断"设过没有"用 `V.is_unset_color(rgb)`。
+
+**另一条**：回读值是 **8bit 量化**的。设 `(0.92, 0.72, 0.30)` 回读
+`(0.9176, 0.7176, 0.2980)`，偏差恒约 **0.0024**。所以 `tol` 不能小于 0.01，
+用 1e-9 会永远失败（这条已写成测试用例反向证明回读真的在起作用）。
+
+### T7 ★ 冷启/刚建完特征后第一次 `SaveAs3` 返回 rc=1 + 0 字节
+
+**现象**：`save_png` 偶发 `截图失败/空白: ... rc=1 size=0`，但重跑就好。
+
+**根因**：SW 视口还没画完，`SaveAs3` 提前返回。
+
+**修法**（`V.save_png` 已加 `retries=3`）：失败时重切视图 + `GraphicsRedraw2`
++ 等待 0.6/1.2/1.8 秒再试。旧版直接抛，于是 review/four_views 把
+"冷启抖动"误判成"截图失败"。
+
+### T8 ★ 网格体不在 `GetBodies2()` 里
+
+**现象**：STL 导入成功、bbox 正确，但 `body_counts()` 返回 `(0, 0)`。
+
+**根因**：网格件既不算实体也不算曲面体。`IPartDoc.GetBodies2()` 直接返回 `None`。
+真正的路径是遍历特征树：
+```
+MeshFeatureContainer（"图形1"）
+  └─ MeshBodyFeature（"图形 (闭合) -1"）
+       └─ GetSpecificFeature2() → IBody2（IsMeshBody=True）
+```
+`V.body_counts()` 看不到，`mesh_import.mesh_bodies(doc)` 才数得到。
+
+### T9 ★ `LoadFile4` 第 3 参不能传 `None`
+
+```python
+sw.LoadFile4(path, "r", None, err)     # ✗ TypeError: int() argument ... not 'VARIANT'
+sw.LoadFile4(path, "r", empty, err)    # ✓ empty = VARIANT(VT_DISPATCH, None)
+```
+第 3 参 `ImportData` 声明为 **VT_DISPATCH**。传 `None` 或 `pythoncom.Missing`
+都报类型不匹配。必须传一个**空 IDispatch VARIANT**：
+`win32com.client.VARIANT(pythoncom.VT_DISPATCH, None)`（= `VARIANT(9, None)`）。
+
+★ 且 `LoadFile4` 在 **ISldWorks** 上，不在 IModelDoc2 —— 用 `api_lookup.py` 查出来的。
+
+### T10 ★ 网格件不是参数化实体（别当成零件用）
+
+STL/OBJ 导入后特征树里只有 `MeshFeatureContainer` / `MeshBodyFeatureFolder`，
+**没有 `ProfileFeature`（草图）也没有 `Extrusion`**。所以：
+
+| 能 | 不能 |
+|---|---|
+| 视觉参考、量尺寸、做参照面 | 拉伸/切除/抽壳、加配合当机构件、出工程图 |
+
+`import.mesh` 因此登记为 **pilot**，不是 verified。
+
+### T11 ★ 中文任务词无法靠分词匹配
+
+`--task "画一个渐开线齿轮"` 用空格分词拿不到"齿轮"这个词（中文没空格）。
+`api_lookup.TASK_ALIASES` 显式维护 40+ 条中文词 → 能力 id / 方法关键词映射，
+中文命中权重 +5。纯英文任务走分词就够。
+
+### T12 ★ `GetBodies3` 在 IComponent2 上，不在 IPartDoc
+
+`api_lookup.py --find GetBodies3` 显示只有 `IComponent2` 有。
+`IPartDoc` 只有 `GetBodies2(BodyType)` 单参版。查接口归属不要凭"应该在这里"。
+
+### T13 ★ 工程图人判项必须显式标 `manual`
+
+尺寸链、孔表、标题栏字段、引线压线 —— **全都没有可靠 API 判据**。
+`drawing_delivery.check_drawing()` 把这四项标 `kind="manual"`、`status="manual"`，
+整体 status 因此最多到 `warn`，**绝不可能是 pass**。
+这是 `verify_gate` 的「无法验证 ≠ 通过」在工程图上的落地。
+
+### T14 ★ STL 三角面绕向决定 SW 能否缝合
+
+即使法线非零，若所有面绕向朝内，SW 也会报法线问题。
+生成时用「法线 · (面心 − 体心) > 0」判断朝外，否则交换后两个顶点。
+凹形件这个判据可能失效（体心不在内部），此时只能人工检查。
+
+### T15 ★★ 同一张工程图上重复 InsertModelAnnotations3 不会再加标注
+
+**现象**：在一张图纸上连着试 8 组 `types`，得到：
+
+```
+types=8        rc=False 增量=+0
+types=32768    rc=True  增量=+1
+types=524288   rc=False 增量=+0
+types=557056   rc=False 增量=+0     ← 这里开始全是 0
+types=557064   rc=False 增量=+0
+```
+
+看起来"只有 32768 能用，加了别的位就坏"。**这个结论是错的。**
+
+**根因**：第一次成功插入后，这张图的"可导入尺寸"已经被消费掉了。
+后续调用无论参数对不对，都只能得到 0 增量。**测的是"这张图还能不能加"，
+不是"这个参数行不行"。**
+
+**正确做法 —— 每组参数都新建图纸**：
+
+```python
+for types in combos:
+    sw.CloseAllDocuments(True)          # ★ 清场
+    V.open_doc(sw, part, 1)             # 模型必须重新打开
+    dw = sw.NewDocument(tpl, 0, 0, 0)
+    ... 插视图 ...
+    before = V.drawing_annotation_total(dw)
+    rc = V.insert_model_annotations(dw, 0, types, True, False, False, False)
+    after = V.drawing_annotation_total(dw)
+```
+
+改对之后真相是：**只要 types 含 32768 位就成功**（32768 单独 / |524288 / |8 /
+|2 / |4 / |16 / 全开 1737215 全部 +1）；不含 32768 的（8 单独、524288 单独）才是 0 条。
+
+**推广**：任何"有状态、会消费输入"的 API（插表、插标注、插视图、导图），
+参数对比实验必须**每次重置到干净状态**，否则测的是累积效应。
+这和 T6（颜色回读）、T8（GetBodies2 看不到网格体）是同一类错误：
+**把"观测方式的问题"当成"API 的问题"**。
+
+### T16 ★ 孔表在本机确实不可用（51 组合实测）
+
+`IView.InsertHoleTable3(9参)` / `InsertHoleTable2(6参)` / `InsertHoleTable(5参)` /
+`IDrawingDoc.InsertTableAnnotation2(7参)` —— **全部返回 None**。
+
+已排除的变量：
+
+| 维度 | 试过的值 |
+|---|---|
+| 模板 | 中文 standard--letters / sizes combined--letters / 英文 standard--letters（均存在） |
+| anchor | 0 / 1 / 2 / 3 |
+| tagorder | 0 / 1 |
+| tagtype | 0 / 1 / 2 |
+| 坐标 | (0.153,−0.0377) 官方示例负值 / (0.15,0.15) / (0.25,0.05) / (0.02,0.02) / (0.14,0.19) |
+| UseAnchorPoint | True / False |
+| 选择集 | `SelectByID` 成功（sel=1）、`GetSelectedObjectsDrawingView2` 拿到 IView |
+| 前置标注 | 先插尺寸标注再插表 |
+
+**结论**：与 `ThickenSheet` 同类 —— 接口层不可用，不是用法问题。
+维持 `not_implemented`，变通是自定义属性 + CSV。
+
+★ 顺带：`SelectByID2` 的 Callout 参数（第 8 位 VT_DISPATCH）在本机早绑定下
+**恒报"类型不匹配"**，传 `None` / `VARIANT(VT_DISPATCH, None)` / `Missing` 都不行。
+改用 `IModelDoc2.SelectByID`（5 参，无 dispatch 参数）可以正常选中：
+```python
+V.wrap(dw, "IModelDoc2").SelectByID("工程图视图1", "DRAWINGVIEW", 0.06, 0.05, 0)
+```
+
+### T17 ★ AddDimension2 会弹模态框挂死 COM
+
+**现象**：给草图加驱动尺寸时调 `IModelDoc2.AddDimension2(x, y, z)`，
+SW 弹出尺寸数值编辑框，COM 调用永久阻塞（实测卡 10 分钟+，只能 taskkill）。
+
+**根因**：`AddDimension2` 在 GUI 层需要用户输入数值，属于交互式命令。
+
+**修法**：要"带驱动尺寸的模型"，**别手工加尺寸**，让特征自己产生：
+拉伸深度 `D1`、切除深度 `D1`、圆角半径 `R1` 本身就是驱动尺寸，建模完成即存在。
+`InsertModelAnnotations3` 导入的正是这些特征尺寸。
+
+★ 与 T1（0 法线 STL 弹框）同一类：**任何会弹窗的 API 都不能在无人值守脚本里调**。
+判断方法：先在界面上手工做一遍，看会不会弹框。

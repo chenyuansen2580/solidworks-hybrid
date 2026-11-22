@@ -1,6 +1,6 @@
 ---
 name: solidworks-modeling
-description: "本机 SolidWorks 2022 全流程建模技能：从需求规划、齿廓/变形数学、COM 建模、装配配合、运动仿真，到校核出图。当用户要求用 SolidWorks 画零件/装配体/减速器/齿轮，或提到 SW 建模、拉伸、切除、旋转、放样、扫描、抽壳、圆角、倒角、拔模、阵列、镜像、钣金、焊件、曲面、孔向导、属性、配置、材料、装配、配合、运动仿真、工程图、BOM、渲染时调用。所有 API 签名基于本机 SW2022 实测；含 176 条踩坑速查与可复用脚本。"
+description: "本机 SolidWorks 2022 全流程建模技能：从需求规划、齿廓/变形数学、COM 建模、装配配合、运动仿真，到校核出图。当用户要求用 SolidWorks 画零件/装配体/减速器/齿轮，或提到 SW 建模、拉伸、切除、旋转、放样、扫描、抽壳、圆角、倒角、拔模、阵列、镜像、钣金、焊件、曲面、孔向导、属性、配置、材料、装配、配合、运动仿真、工程图、BOM、渲染时调用。所有 API 签名基于本机 SW2022 实测；含 211 条踩坑速查与可复用脚本。"
 metadata:
   category: engineering-cad
   verified_on: SOLIDWORKS 2022 SP5.0 / 30.5.0.0049 / typelib v30
@@ -85,22 +85,22 @@ V.save_checked(asm, r"C:\temp\asm.SLDASM")
 **环境自检**（按需选档，别每次都跑全量）
 
 ```bash
-python scripts/run_all.py --static   # 0.7 秒，不开 SW ★ 每次改完先跑这个
-python scripts/run_all.py --quick    # 9 分钟，+ assembly + doctest + capcheck ★ 日常够用
-python scripts/run_all.py            # 约 14 分钟，全量 7 静态项 + 11 SW 套件
-python scripts/run_all.py --cold     # 10 分钟，每套件冷启（排障用）
+python scripts/run_all.py --static   # 约 3 秒，不开 SW ★ 每次改完先跑（11 项）
+python scripts/run_all.py --quick    # 约 27 分钟，11 静态项 + 10 核心 SW 套件 ★ 日常够用
+python scripts/run_all.py            # 约 40 分钟，全量 11 静态项 + 15 SW 套件
+python scripts/run_all.py --cold     # 每套件冷启（排障用，最慢）
 python scripts/run_all.py --force    # 强制重跑（默认源文件没变会跳过）
 ```
 
 | 档位 | 覆盖 | 何时用 |
 |---|---|---|
-| `--static` | 编译 + 导入 + 能力表 + 门禁 | 每次改完代码 |
-| `--quick` | + smoke + features + **assembly** + **doctest** + **capcheck** | 改完 swlib_v2 主逻辑 |
+| `--static` | 编译 + 导入 + 能力表 + 门禁 + **API 查证** | 每次改完代码 |
+| `--quick` | + smoke/features/**assembly**/**doctest**/capcheck/trace/**review**/**appearance**/**drawing**/**mesh** | 改完 swlib_v2 主逻辑 |
 | 全量 | + draft/sheetmetal/props/surface/motion | 发版前、改接口签名后 |
 
-三种优化（原 10 分钟 → 0.7 秒 / 2.4 分钟 / 6.5 分钟）：
-1. **静态层不开 SW**：0.7 秒拦掉 80% 破坏（语法错、函数被删、能力表被改坏）
-2. **套件间不 kill SW**：首个冷启后共用实例，省掉 7 次冷启动
+三种优化（原 10 分钟 → 2 秒 / 27 分钟 / 40 分钟）：
+1. **静态层不开 SW**：2 秒拦掉 80% 破坏（语法错、函数被删、能力表被改坏、签名漂移）
+2. **套件间不 kill SW**：首个冷启后共用实例，省掉 14 次冷启动
 3. **增量跳过**：源文件没变且上次全过 → 直接跳过；`--force` 强制重跑
 
 | 套件 | 覆盖 |
@@ -117,9 +117,16 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | **capcheck** | **能力表抽查：圆周阵列/镜像/孔向导/旋转曲面/焊件切割清单** |
 | **freshness**（静态层） | **交付新鲜度：旧文件不能冒充本轮成果（11 项断言）** |
 | **gap**（静态层） | **能力缺口协议：结构化替代+COM探测（12 项断言）** |
-| **trace** | **执行 Trace：每步留痕+失败定位（10 项断言）** |
-| **docs**（静态层） | **单一真相源：数字/引用/id 自洽（9 项断言）** |
-| **golden**（静态层） | **8 个标准工作流验收，真机数值对 REPORT.json（10 项断言）** |
+| **trace** | **执行 Trace：每步留痕+失败定位（10 项断言；静态层 --offline 跑 9 项）** |
+| **docs**（静态层） | **单一真相源：数字/引用/id 自洽（14 项断言）** |
+| **golden**（静态层） | **9 个标准工作流验收，真机数值对 REPORT.json（14 项断言）** |
+| **apilookup**（静态层） | **API 查证：类型库签名/参数 VT/by-ref 识别（10 项断言）** |
+| **review** | **结果自审查：四视图 md5/像素判据/报告（12 项断言）** |
+| **appearance** | **设色回读校验 + by-ref VARIANT 出参（10 项断言）** |
+| **drawing** | **工程图底线：视图数/PDF/标注回读/人判项（15 项断言）** |
+| **mesh** | **网格导入：LoadFile4 + 法线预检 + bbox（15 项断言）** |
+| **harmonic**（静态层） | **谐波齿廓：椭圆变形/传动比/闭合/自交（纯数学）** |
+| **planetary**（静态层） | **行星轮系：齿数/传动比/装配/邻接/正体积（纯数学）** |
 | gate | 四级验证门禁降级逻辑 |
 
 ---
@@ -129,10 +136,11 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | 需求 | 读 | 关键内容 |
 |---|---|---|
 | 建模流程、验收纪律、交付清单 | `references/workflow.md` | 8 步流程、验收矩阵、三重断言 |
-| 报错、返回 None、行为诡异 | `references/pitfalls.md` | **A~S 十九章 176 条速查** |
+| 报错、返回 None、行为诡异 | `references/pitfalls.md` | **A~T 二十章 211 条速查** |
 | 齿轮/齿廓/谐波变形 | `references/gears.md` | 渐开线包络、摆线 CTP、椭圆变形 |
-| API 签名与接口归属 | `references/api-map.md` | 本机实测的接口归属表 + REA 2164 命令号 |
+| **API 签名与接口归属** | `references/api-map.md` + `scripts/api_lookup.py` | 实测归属表 + **类型库一键查证** |
 | 旋转/放样/扫描/抽壳/阵列/镜像/拔模/曲面/焊件/运动 | `references/features.md` | 12 种手法的选择集 mark 与完整参数 |
+| **工程图规范底线** | `references/drawing-standards.md` | **5 条底线 + 人判项 + 本机实测数据** |
 | **完整实战案例**（多基准面+加强筋+出图） | `references/example_bracket.md` | 电机支架：坐标契约、体积解析、5 个缺陷修复 |
 | **全能力验收案例**（9 零件装配体） | `references/example_assembly.md` | 30 项 verified 全覆盖、9 个缺陷修复记录 |
 | **最新全能力案例**（14 零件同步带模组） | `references/example_belt_actuator.md` | **31/31 当时清单全覆盖、14 件体积 0.000%、12 条新坑** |
@@ -145,10 +153,12 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | **文档数字和源码是否一致** | `scripts/test_doc_consistency.py` | 9 项自洽断言（数字/引用/id/子技能/回退） |
 | **专项工作流走哪个子技能** | `SUBSKILLS.md` | 4 个子技能：工程图/齿轮/钣金焊件/装配 |
 | **标准真机验收清单** | `golden-workflows.yaml` | 8 个 workflow：输入/产出/验收数值 |
+| **结果对不对（不是"跑通没"）** | `scripts/review.py` | 四视图 md5/内容占比/色数/裁切 + 报告 |
+| **网格参考件怎么导** | `scripts/mesh_import.py` | LoadFile4 空 IDispatch + 法线预检 |
 
 ## Golden Workflow（标准真机验收）
 
-`golden-workflows.yaml` 定义 8 个标准工作流，每个声明：
+`golden-workflows.yaml` 定义 9 个标准工作流，每个声明：
 `required_inputs`（必须先有的输入） / `required_artifacts`（必须交付的文件） /
 `real_acceptance_2022`（本机实测数值，不编造跨版本结论）。
 
@@ -159,7 +169,8 @@ python scripts/run_all.py --force    # 强制重跑（默认源文件没变会�
 | `belt_actuator_assembly` | 14 件同步带模组 | 15 组件/10 配合/0 偏差 |
 | `sheetmetal_bracket` | 钣金电机板 | vol=38550.8 dev=0.000% |
 | `weldment_frame` | 角钢机架 | vol=260848.9 4 实体 |
-| `drawing_delivery` | 工程图交付 | 4 视图 md5 互异 |
+| `drawing_delivery` | 工程图交付 | 3 视图 PDF 7130 B / GetViewCount=4 / 4 项人判 |
+| `mesh_reference_import` | 网格参考件 | STL 20×30×40 bbox 偏差 0.000mm / mesh_bodies=1 |
 | `motion_study` | 运动算例 | 2 算例计算成功 |
 | `capability_gate_drill` | 三机制拦截 | 11+12+10+9+10 项断言 |
 
@@ -215,7 +226,7 @@ V.volume_mm3(m)                       # 单位已统一（IMassProperty vs IBody
 V.volume_check(m, theory, tag="x")    # 返回 (ok, 实测, 偏差%)
 V.verify(m, volume=..., bbox=..., bodies=1)   # 体积按相对%、bbox 按绝对 mm
 V.body_counts(m)                      # (实体数, 曲面体数)
-V.capability_report()                 # 38 verified + 10 pilot + 3 not_implemented
+V.capability_report()                 # 50 verified + 11 pilot + 5 not_implemented
 V.require_verified("part.extrude")    # 交付门禁；非 verified 抛 CapabilityGapError
 
 # 能力不够时：拿结构化缺口，不是裸异常
@@ -243,7 +254,12 @@ tr.require_ok()                            # 有 fail 就抛（带 fail_at 文�
 ```python
 comps = V.comps(asm)                  # {实例名: IComponent2}
 V.count_mates(m)                      # 配合是否真建成（唯一可信判据）
-V.set_component_color(comp, (0.92, 0.72, 0.30))  # 组件级上色（9元素+VARIANT）
+V.set_component_color(comp, (0.92, 0.72, 0.30))  # ★ 设完自动回读，偏差>2% 抛异常
+V.get_component_color(comp)               # 读回 (r,g,b)；未设色返回 (-1,-1,-1) 哨兵
+V.is_unset_color(rgb)                     # 判哨兵：True 表示"还没设过色，继承零件外观"
+V.color_dev(got, want)                    # 最大分量偏差 0.0~1.0（回读判据就用它）
+V.apply_palette(comps, {k1: (0.92, 0.72, 0.30), k2: (0.20, 0.55, 0.85)})
+                                          # 批量上色 + 批量回读 → {"applied": 2, "failed": []}
 
 # 摆位：★ place 设的是【组件原点】，非对称件必偏 → 用 place_to
 V.place(sw, comp, V.rot_z(90), (x, y, z))
@@ -264,6 +280,27 @@ V.diff_snapshot(box0, V.all_boxes(asm))   # 逐组件明细 [(名, 偏差)]
 # 干涉：★ 必须在 IAssemblyDoc 上（IModelDoc2 必抛，会误判成"有干涉"）
 ok, raw = V.interference_ok(asm)      # (True, (None, None))
 ```
+
+**by-ref 出参**（★ 2026-11-21 新增，`swlib`）
+```python
+import swlib as L
+
+# ① 构造器（VT_BYREF | 基础类型），取回值用 .value
+err = L.byref_int(0); dev = L.byref_double(0.0); flag = L.byref_bool(False)
+
+# ② 调用带出参的 API —— 必须降级动态绑定才拿得到真实值
+ret, outs = L.call_byref(m, "SaveAs4", [path, 0, 0], ["i4", "i4"])
+# 合法路径 → (True, [0, 0])
+# 非法路径 → (False, [1, 0])      错误码 1 = 目录不存在
+# 非法扩展 → (False, [256, 0])
+
+# ③ 早绑定只能拿返回元组里的出参（入参传普通 0）
+ret, outs = L.call_byref(m, "SaveAs4", [path, 0, 0], ["i4", "i4"], dynamic=False)
+r, split = L.split_out(ret, 2)     # (True, 0, 0) → (True, [0, 0])
+```
+★★ **早绑定 `_ApplyTypes_` 不接受 VARIANT 形式的 by-ref**：
+`d.SaveAs4(p, 0, 0, VARIANT(VT_BYREF|VT_I4, 0), ...)` → `TypeError: int() argument ... not 'VARIANT'`。
+因为 `(16387, 3)` 被当 int 解包后传给 `InvokeTypes`。要真实出参必须走动态绑定。
 
 **出图**
 ```python
@@ -311,6 +348,80 @@ v = F.merge_gates([g, gf], "delivery").verdict()
 ★ 新鲜度只证明「文件新增或内容变了」，**不证明几何正确** —— 必须和几何断言、
 目视复核一起用。详见 `references/delivery-freshness.md`。
 
+**结果自审查**（`scripts/review.py`，★ 2026-11-21 新增）
+```python
+import review as R
+
+# ① 全链路：出四视图 + 像素判据 + 交付文件检查 + 写报告
+rep, path = R.run_review(m, r"out\review", basename="bracket",
+                         expected_outputs=[part, pdf])
+print(rep["status"])            # pass / warn / fail
+print(rep["issues"])            # ["views_distinct: 4 张图 / 1 个不同 md5", ...]
+
+# ② 只审已有截图（不开 SW，任何机器都能跑）
+rv = R.review_images({"iso": p1, "front": p2, "top": p3, "right": p4})
+
+# ③ 转成门禁，和几何断言合并
+g = R.to_gate(rep)              # → verify_gate.Gate
+```
+| 判据 | 拦什么 |
+|---|---|
+| `views_distinct` | 四视图同一张（视口锁死） |
+| `content_*` ≥1% | 空白图 / 模型不在视口 |
+| `color_*` ≥6 | 单色块，看不出结构（WARN） |
+| `views_not_clipped` | 零件被裁切（WARN） |
+| `file_*` >1KB | 交付文件 0 字节/缺失 |
+★ **预览非空白 ≠ 模型正确** —— 比例/方位/部件缺失/重叠悬空仍须人眼。
+
+**网格导入**（`scripts/mesh_import.py`，★ 2026-11-21 新增）
+```python
+import mesh_import as MI
+
+# ① 导入前必须预检法线：0 法线 STL 会让 SW 弹模态框把 COM 永久挂死
+MI.precheck_stl(r"D:\ref\part.stl")        # {"ok": False, "reason": "...弹模态框卡死"}
+
+# ② 导入（LoadFile4，第 3 参必须是空 IDispatch，不能 None）
+rep = MI.import_mesh(sw, r"D:\ref\part.stl",
+                     expect_bbox_mm=(0, 0, 0, 20, 30, 40))
+print(MI.render(rep))                      # bbox 偏差 / 网格体数 / 诚实声明
+
+# ③ 法线坏了自动修（按体心朝外纠正绕向）
+fixed, stats = MI.repair_stl_normals(src)
+```
+★ 网格件**不是参数化实体**：无草图/特征树，不能拉伸切除、不能加配合当机构件。
+★ `GetBodies2()` 看不到网格体（返回 None），必须走 `MeshBodyFeature.GetSpecificFeature2`。
+
+**工程图交付**（`scripts/drawing_delivery.py`，★ 2026-11-21 新增）
+```python
+import drawing_delivery as DD
+
+rep = DD.create_drawing(sw, r"out\bracket.SLDPRT", r"out\bracket.pdf")
+print(DD.render(rep))
+# 幅面: 279.4 × 215.9 mm（11.00 × 8.50 in），比例 1.0:1.0
+# 视图: 期望 3 / 实得 3  (工程图视图1,工程图视图2,工程图视图3)
+# 标注: 前 2 → 后 3（增 1）
+# [OK  ] views / views_named / pdf_bytes / sheet_size / annotations
+# [MAN ] dim_chain / hole_table / title_block / no_overlap  ← 人判，绝不默认 pass
+
+# 单独读幅面（走 ISheet.GetSize 两个 by-ref 出参）
+V.sheet_properties(dw)   # {'width_mm': 279.4, 'height_mm': 215.9, 'paper_size': 0, ...}
+```
+★ 底线 5 条见 `references/drawing-standards.md`。机器能判视图数/PDF/幅面/标注增量，
+**尺寸链、孔表、标题栏字段、压线** 一律 `manual`。
+★ `types` 必须含 **32768**（`V.ANN_WORKING`）；同一图纸只能插一次标注，
+比较参数须每次新建图纸。孔表 51 组合全 None，维持 not_implemented。
+
+**API 查证**（`scripts/api_lookup.py`，★ 2026-11-21 新增 —— 铁律 1 的执行手段）
+```bash
+python scripts/api_lookup.py IFeatureManager HoleWizard5   # 27 参 + 每参 VT + by-ref
+python scripts/api_lookup.py HoleWizard5                   # 自动定位接口
+python scripts/api_lookup.py --find HoleWizard             # 模糊搜
+python scripts/api_lookup.py --task "画一个渐开线齿轮"      # 中文任务 → 候选能力/方法
+python scripts/api_lookup.py IDrawingDoc InsertModelAnnotations3 --json
+```
+★ 它直接证明了两条旧文档的错：`InsertModelAnnotations3` 是 **6 参**不是 4 参；
+`LoadFile4` 在 **ISldWorks** 上不是 IModelDoc2。
+
 **专业手法**（详见 `references/features.md`）
 ```python
 V.revolve_checked(m, sk, 360)             # ★ 轮廓「X=半径、Y=轴线」，中心线沿 Y
@@ -345,14 +456,16 @@ assert check_ring(ring, g)["r_ok"]
 
 ---
 
-## 能力总览（38 verified / 10 pilot / 3 not_implemented）
+## 能力总览（50 verified / 11 pilot / 5 not_implemented）
 
 > ★ **单一真相源**：能力清单在 `capabilities.yaml`（等级 / 限制 / 依赖 / 版本 / 允许模式），
 > `swlib_v2.CAPABILITIES` 从它加载，本文档数字由 `test_doc_consistency.py` 校验。
 > **加能力只改 yaml，别手写数字** —— 数字和源码不一致会让测试变红。
 
 > **2026-11-20 用 14 零件同步带模组做过全量验收：31/31 当时清单全覆盖，14 件体积全部 0.000%**；
-> 之后 capcheck 又实证了 mirror / surface.revolve / plane_coincident 三项，能力表升至 38 verified。
+> 之后 capcheck 又实证了 mirror / surface.revolve / plane_coincident 三项。
+> **2026-11-21 补 6 个缺口**（对标 wzyn 2230★）：结果自审查、设色回读、by-ref 出参、
+> 网格导入、工程图底线、API 查证工具 → 能力表 51 → 63 项。
 > 详见 `references/example_belt_actuator.md`（主推案例）。
 > 2026-11-19 的 9 零件装配体（30/30，`example_assembly.md`）作为历史记录保留。
 
@@ -363,10 +476,12 @@ assert check_ring(ring, g)["r_ok"]
 | **专用** | 钣金基体法兰、曲面拉伸/平面/**旋转**、结构件焊件、偏移基准面 | 焊件切割清单 |
 | **属性** | 自定义属性、配置、材料 | — |
 | **装配** | 插入、定位、固定、组件上色、**同心/距离/重合配合（含平面重合）** | 轴向自动对齐（须手加距离配合） |
-| **出图** | 四视图、PNG（含 fit）、STEP | 剖视图、自动标注、BOM 插表 |
+| **外观** | **设色回读校验、批量上色+批量回读** | 渲染上色（本机接口不可用） |
+| **出图** | 四视图、PNG（含 fit）、STEP、**视图计数/枚举**、**幅面读取**、**自动标注**、**底线检查** | 剖视图、BOM 插表 |
+| **导入** | **STL 法线预检/修复** | **网格导入（STL/OBJ 参考件）** |
 | **运动** | 运动算例、计算 | 帧率、结果读取、AVI |
-| **专业** | 渐开线齿轮、谐波变形、弧、样条 | — |
-| **门禁** | 三段式判据、四级验证、跨版本 arity | — |
+| **专业** | 渐开线齿轮、**谐波齿廓校核**、**行星轮系校核**、弧、样条 | — |
+| **门禁** | 三段式判据、四级验证、跨版本 arity、**结果自审查、by-ref 出参** | — |
 
 **⚠️ 本机不可用**：曲面加厚（`ThickenSheet` 恒 None）、渲染上色（`GetDisplayStateSetting` 抛异常）。
 
@@ -385,7 +500,7 @@ assert check_ring(ring, g)["r_ok"]
 
 ---
 
-## 高频坑 Top 16（完整 176 条见 pitfalls.md）
+## 高频坑 Top 16（完整 211 条见 pitfalls.md）
 
 | # | 现象 | 修复 |
 |---|---|---|

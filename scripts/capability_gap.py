@@ -113,6 +113,22 @@ ALTERNATIVES = {
     "export.sldprt_to_web": [
         ("export.step", "先导 STEP，再用外部工具转 glTF/GLB"),
     ],
+    # ---- 2026-11-21 补：6 个缺口新增的能力，非 verified 的要给替代
+    "import.mesh": [
+        ("import.mesh_precheck", "导入前先跑法线预检，避免 SW 弹模态框挂死"),
+        ("part.extrude", "要参数化就别导网格，直接建模"),
+    ],
+    "drawing.annotations": [
+        ("drawing.create", "视图+PDF 已验证；标注改人眼补或手工 InsertModelItems"),
+        ("drawing.standards_check", "机器判视图数/PDF/标注增量，人判尺寸链"),
+    ],
+    "drawing.hole_table": [
+        ("props.custom", "孔规格/数量写进自定义属性，交付附 CSV"),
+        ("drawing.create", "先出标准视图，孔表需界面手工补"),
+    ],
+    "drawing.title_block_fill": [
+        ("props.custom", "件号/材料/比例写自定义属性，标题栏靠模板链接或手工"),
+    ],
 }
 
 # 缺口时的建议探测点（接口, 方法/属性）
@@ -205,26 +221,10 @@ class CapabilityGapError(RuntimeError):
 
 # ---------------------------------------------------------------- 查询
 def _caps():
-    """延迟导入 CAPABILITIES，避免循环依赖。
-
-    ★ 离线回退：swlib_v2 顶层依赖 pythoncom，没装 pywin32 / 非 Windows 时
-      import 必然失败。此时直接读 capabilities.yaml（capabilities_loader 自带
-      mini 解析器，零第三方依赖），保证离线层也能正确判定能力等级，
-      而不是把所有能力误判成「不可用」。
-    """
+    """延迟导入 CAPABILITIES，避免循环依赖。"""
     try:
         import swlib_v2 as V
         return V.CAPABILITIES, V.capability
-    except Exception:
-        pass
-    try:
-        import capabilities_loader as CL
-        table = CL.to_swlib_table()
-
-        def _capability(name):
-            return table.get(name, (REFERENCE_ONLY, "未登记"))
-
-        return table, _capability
     except Exception:
         return {}, None
 

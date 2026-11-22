@@ -7,7 +7,6 @@
   3. 可审计可回放：序列化往返后信息不丢
 
 跑法：python test_exec_trace.py
-      python test_exec_trace.py --offline   # 只跑离线用例
 """
 import json
 import os
@@ -19,20 +18,12 @@ sys.path.insert(0, HERE)
 import exec_trace as ET   # noqa: E402
 
 fails = []
-skips = []
-
-
-class _Skip(Exception):
-    """需要真机 COM 的用例，在离线环境跳过而不计失败。"""
 
 
 def chk(name, fn):
     try:
         fn()
         print("  [OK] %s" % name)
-    except _Skip as e:
-        print("  [--] %-42s SKIP（%s）" % (name, e))
-        skips.append(name)
     except AssertionError as e:
         print("  [XX] %-42s %s" % (name, e))
         fails.append(name)
@@ -175,14 +166,9 @@ def t_require_ok():
 
 # ---------------------------------------------------------------- 真实 SW
 def t_real_modeling_trace():
-    """★ 真实建模：每步记体积，失败能定位到具体步骤（仅真机）"""
-    try:
-        import pythoncom
-        import swlib_v2 as V
-    except ImportError as e:
-        raise _Skip("需 Windows + pywin32：%s" % e)
-    if "--offline" in sys.argv:
-        raise _Skip("--offline 模式只跑离线用例")
+    """★ 真实建模：每步记体积，失败能定位到具体步骤"""
+    import pythoncom
+    import swlib_v2 as V
 
     pythoncom.CoInitialize()
     sw = V.connect(version=2022, verbose=False, warn_multi=False, wait_ready=30)
@@ -260,11 +246,14 @@ chk("序列化往返", t_serialize_roundtrip)
 chk("JSON 合法", t_json_valid)
 chk("timed 辅助函数", t_timed_helper)
 chk("require_ok 硬门禁", t_require_ok)
-chk("★ 真实建模 trace", t_real_modeling_trace)
+
+# ★ --offline：跳过真机建模那一项，让 Linux/CI（无 SW / 无 pywin32）也能跑
+if "--offline" in sys.argv:
+    print("  [--] 真实建模 trace    SKIP（--offline，需 SW）")
+else:
+    chk("★ 真实建模 trace", t_real_modeling_trace)
 
 print()
-if skips:
-    print("跳过 %d 项（需真机）: %s" % (len(skips), skips))
 if fails:
     print("失败 %d 项: %s" % (len(fails), fails))
     sys.exit(1)

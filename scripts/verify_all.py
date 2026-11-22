@@ -175,3 +175,13 @@ if __name__ == "__main__":
           % (gr.ra_use - (a + gp.rf)))
     print("\n  体积汇总: 太阳=%.3f 行星x3=%.3f 齿圈=%.3f 行星架=%.3f"
           % (Vs, 3 * Vp, Vr, V_carrier))
+
+    # ---- 真正的验收断言（旧版只打印，数值错了也会正常退出）
+    assert ZR == ZS + 2 * ZP, "齿数关系不成立"
+    assert abs((1 + ZR / float(ZS)) - 5.0) < 1e-9, "传动比应为 5.0"
+    assert (ZS + ZR) % 3 == 0, "装配条件不成立"
+    assert 2 * a * math.sin(math.pi / 3) > 2 * gp.ra_use, "邻接条件不成立"
+    assert all(v > 0 for v in (Vs, Vp, Vr, V_carrier)), "有零件体积非正"
+    assert abs(a - (gs.d + gp.d) / 2.0) < 1e-9, "中心距与分度圆不符"
+    print("\n  [PASS] 轮系 4 项约束 + 4 个正体积 + 中心距 全部成立")
+    print("PLANETARY VERIFY PASS")

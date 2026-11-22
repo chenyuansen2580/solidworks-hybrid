@@ -143,6 +143,7 @@ def main():
 
     print("\n" + "=" * 84)
     print(">>> 齿廓数据全部验收通过")
+    print("HARMONIC CHECK PASS")
     print("=" * 84)
 
 

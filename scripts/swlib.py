@@ -60,6 +60,119 @@ def unrealized_itf():
     return "-2147352573"
 
 
+# ---------------------------------------------------------------- by-ref 出参
+# ★★ 2026-11-21 实测（本机 SW2022 + pywin32 306）：
+#   早绑定（gencache 生成的 _ApplyTypes_）**不接受 VARIANT 形式的 by-ref 参数**：
+#       d.SaveAs4(path, 0, 0, VARIANT(VT_BYREF|VT_I4, 0), ...)
+#       → TypeError: int() argument must be ... not 'VARIANT'
+#   原因是 `_ApplyTypes_` 会把 (16387, 3) 这种「VT_I4|VT_BYREF + out」直接当 int
+#   解包后传给 InvokeTypes，而 VARIANT 对象不是 int。
+#   早绑定下唯一可行的写法是传普通 int（pywin32 自动转 out 参数并**以元组返回**）：
+#       d.SaveAs4(path, 0, 0, 0, 0)  →  (True, 0, 0)
+#   想真正拿到 by-ref 出参（含错误码），必须**降级到动态绑定**：
+#       dyn.Dispatch(m._oleobj_).SaveAs4(path, 0, 0, err, warn)
+#       →  err.value == 1（目录不存在）/ 256（扩展名非法）
+#   本模块的 byref_* 构造器 + call_byref() 把这个差异包掉。
+def variant_vt(v):
+    """读 pywin32 VARIANT 的 VT 数值（它不暴露 .vt，只能从 repr 解）。
+
+    repr 形如 `win32com.client.VARIANT(16387, 7)`，16387 = 0x4003 = VT_BYREF|VT_I4。
+    读不到返回 None。
+    """
+    import re
+    m = re.search(r"VARIANT\((\d+)", repr(v))
+    return int(m.group(1)) if m else None
+
+
+def byref_int(v=0):
+    """构造 by-ref int 出参（VT_BYREF | VT_I4）。取回值用 `.value`。"""
+    import pythoncom
+    import win32com.client
+    return win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, int(v))
+
+
+def byref_double(v=0.0):
+    """构造 by-ref double 出参（VT_BYREF | VT_R8）。取回值用 `.value`。"""
+    import pythoncom
+    import win32com.client
+    return win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_R8, float(v))
+
+
+def byref_bool(v=False):
+    """构造 by-ref bool 出参（VT_BYREF | VT_BOOL）。取回值用 `.value`（-1/0）。"""
+    import pythoncom
+    import win32com.client
+    return win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BOOL, bool(v))
+
+
+def byref_str(v=""):
+    """构造 by-ref BSTR 出参（VT_BYREF | VT_BSTR）。"""
+    import pythoncom
+    import win32com.client
+    return win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_BSTR, str(v))
+
+
+def byref_variant(v=None):
+    """构造 by-ref VARIANT 出参（VT_BYREF | VT_VARIANT）。"""
+    import pythoncom
+    import win32com.client
+    return win32com.client.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_VARIANT, v)
+
+
+def as_dynamic(obj):
+    """把早绑定对象降级为动态绑定对象（by-ref 出参必需）。
+
+    ★ 早绑定 `_ApplyTypes_` 会把 by-ref 参数当 int 解包，VARIANT 直接 TypeError。
+      动态绑定走 IDispatch::Invoke，VARIANT 原样传下去，出参才能取回。
+    """
+    import win32com.client.dynamic as dyn
+    raw = getattr(obj, "_oleobj_", obj)
+    return dyn.Dispatch(raw)
+
+
+def call_byref(obj, method, args, out_spec, dynamic=True):
+    """调用带 by-ref 出参的 API，返回 (retval, [出参值...])。
+
+    obj       : 早绑定或动态绑定对象
+    method    : 方法名
+    args      : 入参列表（不含出参位置；按 out_spec 顺序插到末尾）
+    out_spec  : 出参类型列表，如 ["i4", "i4"] / ["r8"] / ["bool"]
+    dynamic   : True=先降级动态绑定（推荐）；False=用早绑定传普通 0
+
+    ★ 本机实测（SaveAs4）：
+        dynamic=True  → 能拿到 err=1/256 这种真实错误码
+        dynamic=False → 返回值是元组 (True, 0, 0)，但入参必须传普通 int
+    """
+    makers = {"i4": byref_int, "r8": byref_double,
+              "bool": byref_bool, "str": byref_str, "var": byref_variant}
+    if dynamic:
+        target = as_dynamic(obj)
+        holders = [makers[t]() for t in out_spec]
+        ret = getattr(target, method)(*(list(args) + holders))
+        return ret, [h.value for h in holders]
+    # 早绑定：出参位置传 0/False，pywin32 会把它们并进返回元组
+    zeros = {"i4": 0, "r8": 0.0, "bool": False, "str": "", "var": None}
+    ret = getattr(obj, method)(*(list(args) + [zeros[t] for t in out_spec]))
+    return ret, None
+
+
+def split_out(ret, n_out):
+    """早绑定返回值拆包：`(True, err, warn)` → `(True, [err, warn])`。
+
+    ★ 有些方法返回 (retval, out1, out2)，有些只返回 retval，有些返回短元组 ——
+      统一在这里判：
+        元组长度 >= 1+n_out → retval = ret[0]，出参 = ret[1:1+n_out]
+        元组长度 == 1       → retval = ret[0]，出参全部 None
+        标量                → retval = ret，出参全部 None
+    """
+    if isinstance(ret, (tuple, list)):
+        head = ret[0] if ret else None
+        if len(ret) >= 1 + n_out:
+            return head, list(ret[1:1 + n_out])
+        return head, [None] * n_out
+    return ret, [None] * n_out
+
+
 # ---------------------------------------------------------------- 接口包装
 def wrap(obj, iface=None):
     """把 COM 对象 cast 到指定接口（早绑定）。

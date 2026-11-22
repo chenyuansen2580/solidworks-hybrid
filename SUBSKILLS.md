@@ -8,7 +8,7 @@
 ```
 solidworks-modeling/
 ├── SKILL.md                 根入口：铁律 + 核心 API + 路由 + 门禁
-├── capabilities.yaml        单一真相源（51 项能力）
+├── capabilities.yaml        单一真相源（63 项能力）
 ├── scripts/                 根技能脚本（不复制到子技能）
 ├── references/              全局踩坑 / API / workflow / 案例
 └── subskills/

@@ -75,7 +75,7 @@ workflows:
 
   - id: weldment_frame
     name: 角钢焊件机架
-    capabilities: [weldment.structural, part.extrude]
+    capabilities: [weldment.structural, weldment.cut_list, part.extrude]
     required_inputs: [型材规格, 框架尺寸, 角钢配置, 切割清单要求]
     required_artifacts: [sldprt, geometry_evidence, review_report]
     real_acceptance_2022:
@@ -88,7 +88,8 @@ workflows:
 
   - id: drawing_delivery
     name: 工程图与四视图交付
-    capabilities: [drawing.create, export.png, export.step]
+    capabilities: [drawing.create, drawing.view_count, drawing.standards_check,
+                   drawing.annotations, export.png, export.step]
     required_inputs: [图幅, 视图列表, 中文视图名, 输出格式]
     required_artifacts: [slddrw, pdf, preview, review_report]
     real_acceptance_2022:
@@ -96,13 +97,49 @@ workflows:
       drawing_views: 3
       view_names_must_be_chinese: true
       md5_distinct: 4
-      pdf_bytes: 13031
+      pdf_bytes: 14759
+      pdf_bytes_without_annotations: 7130
       slddrw_bytes: 340026
+      getviewcount_offset: 1
+      getviewcount_rule: "GetViewCount() 含 Sheet1，3 视图返回 4"
+      annotations_types_required: 32768
+      annotations_added: 1
+      annotations_level: verified
+      annotations_rule: "types 必须含 32768；同一图纸重复调用不再增加，比较参数须每次新建图纸"
+      sheet_size_mm: [279.4, 215.9]
+      sheet_size_api: "ISheet.GetSize(Width, Height) 两个 by-ref 出参"
+      hole_table: not_implemented
+      hole_table_evidence: "51 组合全 None，已排除选择集问题"
+      manual_checks: 4
+      manual_ids: [dim_chain, hole_table, title_block, no_overlap]
       subskill: solidworks-engineering-drawing
+
+  - id: mesh_reference_import
+    name: 网格参考件导入
+    capabilities: [import.mesh, import.mesh_precheck]
+    required_inputs: [网格文件, 期望 bbox, 导入模式]
+    required_artifacts: [sldprt, bbox_evidence, review_report]
+    real_acceptance_2022:
+      stl_box_mm: [20, 30, 40]
+      stl_bbox_dev_mm: 0.000
+      obj_box_mm: [12, 8, 6]
+      obj_bbox_dev_mm: 0.000
+      mesh_bodies: 1
+      getbodies2_visible: false
+      loadfile4_owner: ISldWorks
+      loadfile4_arg3: "空 IDispatch VARIANT，不能 None"
+      precheck_bad_normals_rejected: true
+      arg_modes: ["r", "s", ""]
+      arg_modes_bbox_identical: true
+      fake_params_removed: [doc_type, allow_solid]
+      parametric: false
+      assertions: 17
+      note: "网格件无草图/特征树，不能拉伸切除、不能加配合；pilot"
+      subskill: null
 
   - id: motion_study
     name: 运动算例创建与计算
-    capabilities: [motion.study]
+    capabilities: [motion.study, motion.results, motion.framerate]
     required_inputs: [装配体, 算例名称, 计算要求]
     required_artifacts: [sldasm, motion_evidence, review_report]
     real_acceptance_2022:
@@ -110,6 +147,7 @@ workflows:
       calculate_ok: true
       motion_results: pilot
       framerate: not_available
+      note: "只验证建算例+计算；结果读取与帧率仍是 pilot / 接口不可用"
       subskill: null
 
   - id: capability_gate_drill
@@ -122,13 +160,16 @@ workflows:
       freshness_assertions: 11
       gap_assertions: 12
       trace_assertions: 10
-      doc_consistency_assertions: 9
+      doc_consistency_assertions: 14
+      golden_assertions: 14
       key_cases:
         - 只改 mtime 不算新
         - 新文件不能掩盖旧文件
         - 几何 PASS + 新鲜度 FAIL -> 整体 FAIL
         - 每个 pilot 都有替代方案
         - 失败 step 记录 fail_at
+        - 文档等级不能落后于 capabilities.yaml
+        - golden 声明的能力必须已登记
       subskill: null
 
 # 不收录的工作流（诚实边界）：

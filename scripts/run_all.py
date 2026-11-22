@@ -2,23 +2,26 @@
 """一键自检。改完库后跑这个。
 
 四种模式（按耗时排序）：
-    python run_all.py --static   只跑静态层，不启动 SW（0.7 秒）★ 每次改完先跑这个
-    python run_all.py --quick    静态层 + smoke + features + assembly + doctest（约 8 分钟）★ 日常够用
-    python run_all.py            全量，单 SW 实例（约 6.5 分钟）
-    python run_all.py --cold     全量 + 每套件冷启 SW（约 10 分钟，排障用）
+    python run_all.py --static   只跑静态层，不启动 SW（约 2 秒）★ 每次改完先跑这个
+    python run_all.py --quick    静态层 + 12 个核心 SW 套件（约 15 分钟）★ 日常够用
+    python run_all.py            全量，单 SW 实例（约 20 分钟）
+    python run_all.py --cold     全量 + 每套件冷启 SW（排障用）
     python run_all.py smoke draft  只跑指定套件
 
 ★ 优化1：默认模式**不在套件之间 kill SW**。首个套件冷启，
-  之后自动附着同一实例，省掉 7 次冷启动（约 7.5 分钟）。
+  之后自动附着同一实例，省掉 14 次冷启动。
   SW 状态由各 suite 自己的 new_part(close_all=True) 清理，足够隔离。
 
-★ 优化2：静态层不启动 SW，0.7 秒拦掉 80% 的破坏
-  （语法错误、函数被删、能力表被改坏、门禁逻辑回归）。
-  静态层不需 Windows / pywin32：能力表回退 capabilities.yaml，
-  需真机的用例标 SKIP。
+★ 优化2：静态层不启动 SW，约 2 秒拦掉 80% 的破坏
+  （语法错误、函数被删、能力表被改坏、门禁逻辑回归、类型库签名漂移）。
 
 ★ 优化3：增量检测。源文件 + 本脚本都没变、且上次全过 → 直接跳过。
   强制重跑用 --force。
+
+★ 2026-11-21 新增 5 套（对标 wzyn 2230★ 的 6 个缺口）：
+  静态层 + apilookup（API 查证，纯查类型库）
+  SW 层   + review（结果自审查）/ appearance（设色回读+by-ref）/
+            drawing（工程图底线）/ mesh（网格导入）
 """
 import hashlib
 import os
@@ -44,6 +47,14 @@ SW_SUITES = [
     ("doctest",    "doctest_examples.py", "DOC EXAMPLES PASS", "SKILL.md 示例代码实跑", True),
     ("capcheck",   "capcheck.py",        "CAP CHECK PASS",  "能力表抽查：阵列/镜像/孔向导/曲面/焊件", True),
     ("trace",      "test_exec_trace.py", "EXEC TRACE PASS", "执行 Trace：每步留痕+失败定位", True),
+    # ★ 2026-11-21 新增 4 套（对标 wzyn 的 6 个缺口）
+    ("review",     "test_review.py",     "REVIEW PASS",     "结果自审查：四视图 md5/像素判据/报告", True),
+    ("appearance", "test_appearance_byref.py", "APPEARANCE BYREF PASS",
+     "设色回读校验 + by-ref VARIANT 出参", True),
+    ("drawing",    "test_drawing_delivery.py", "DRAWING DELIVERY PASS",
+     "工程图底线：视图数/PDF/标注回读/人判项", True),
+    ("mesh",       "test_mesh_import.py", "MESH IMPORT PASS",
+     "网格导入：LoadFile4 + 法线预检 + bbox", True),
 ]
 
 STATIC_SUITES = [
@@ -51,8 +62,12 @@ STATIC_SUITES = [
     ("freshness", "test_freshness.py", "FRESHNESS PASS", "交付新鲜度：旧文件不能冒充本轮成果", ()),
     ("gap", "test_capability_gap.py", "CAPABILITY GAP PASS", "能力缺口协议：结构化替代+探测", ()),
     ("docs", "test_doc_consistency.py", "DOC CONSISTENCY PASS", "单一真相源：数字/引用/id 自洽", ()),
-    ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "8 个标准真机工作流验收", ()),
-    ("trace", "test_exec_trace.py", "EXEC TRACE PASS", "执行 Trace：留痕/失败定位/序列化（离线部分）", ("--offline",)),
+    ("golden", "test_golden_workflows.py", "GOLDEN WORKFLOW PASS", "9 个标准真机工作流验收", ()),
+    ("apilookup", "test_api_lookup.py", "API LOOKUP PASS", "API 查证：类型库签名/参类型/by-ref", ()),
+    ("harmonic", "check_harmonic.py", "HARMONIC CHECK PASS", "谐波齿廓校核（纯数学）", ()),
+    ("planetary", "verify_all.py", "PLANETARY VERIFY PASS", "行星轮系校核（纯数学）", ()),
+    # ★ 离线 trace：跳过真机建模项，Linux/CI 也能完整回归
+    ("trace", "test_exec_trace.py", "EXEC TRACE PASS", "执行 Trace（离线部分）", ("--offline",)),
 ]
 
 
@@ -115,7 +130,12 @@ def unchanged_since_pass():
 
 # ---------------- 静态层 ----------------
 def layer_static():
-    """编译 + 能力表 + 门禁自测。0.7 秒完成，不需 SW / pywin32。"""
+    """编译 + 能力表 + 门禁自测。约 2 秒，★ 无 SW / 无 pywin32 也能跑。
+
+    离线回退（来自远端 d8b315f，2026-11-21）：无 pywin32 / 非 Windows 时
+    不 import swlib_v2（它顶层要 pythoncom），直接读 capabilities.yaml 统计
+    等级并标注 `源=yaml 离线`。这样 Linux / CI 上也有完整静态回归结论。
+    """
     ok = True
     py_files = [os.path.join(HERE, f) for f in os.listdir(HERE)
                 if f.endswith(".py")]
@@ -135,12 +155,10 @@ def layer_static():
 
     try:
         sys.path.insert(0, HERE)
-        # ★ 离线可用：无 pywin32 / 非 Windows 时不 import swlib_v2（顶层要 pythoncom），
-        #   直接读 capabilities.yaml 统计等级，并注明数据来源。
+        import io
+        import contextlib
         src = "swlib_v2"
         try:
-            import io
-            import contextlib
             import swlib_v2 as V
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
@@ -149,6 +167,7 @@ def layer_static():
             np_ = len(rep.get("pilot", []))
             nn = len(rep.get("not_implemented", []))
         except ImportError:
+            # ★ 离线回退：swlib_v2 顶层 import pythoncom 失败时直接读 yaml
             import capabilities_loader as CL
             bl = CL.by_level()
             nv = len(bl.get(CL.VERIFIED, []))
@@ -156,7 +175,7 @@ def layer_static():
             nn = len(bl.get(CL.NOT_IMPLEMENTED, []))
             src = "yaml 离线"
         if nv < 32:
-            print("  [caps]     FAIL verified 从 38 掉到 %d！" % nv)
+            print("  [caps]     FAIL verified 掉到 %d！" % nv)
             ok = False
         else:
             print("  [caps]     PASS (%d verified / %d pilot / %d not_impl，源=%s)"
@@ -224,7 +243,7 @@ def main():
 
     if quick:
         sw_suites = [s for s in SW_SUITES if s[4]]
-        mode_desc = "quick 模式，约 8 min"
+        mode_desc = "quick 模式，约 27 min"
     else:
         sw_suites = [s for s in SW_SUITES if not want or s[0] in want]
         mode_desc = "冷启模式，约 10 min" if cold else "共用单实例，约 6.5 min"
@@ -263,3 +282,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
