@@ -160,7 +160,7 @@ workflows:
       freshness_assertions: 11
       gap_assertions: 12
       trace_assertions: 10
-      doc_consistency_assertions: 14
+      doc_consistency_assertions: 15
       golden_assertions: 14
       key_cases:
         - 只改 mtime 不算新

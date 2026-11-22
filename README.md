@@ -82,7 +82,7 @@ python scripts/run_all.py --force    # 强制重跑
 
 ## 单一真相源
 
-- **[capabilities.yaml](capabilities.yaml)** — 63 项能力：等级 / 限制 / 依赖 / 版本 / 允许模式
+- **[capabilities.yaml](capabilities.yaml)** — 66 项能力：等级 / 限制 / 依赖 / 版本 / 允许模式
 - **[golden-workflows.yaml](golden-workflows.yaml)** — 9 个标准真机工作流：输入 / 产出 / 验收数值
 
 代码从 yaml 加载，文档数字由 `test_doc_consistency.py` 校验，手写数字会红。
@@ -95,7 +95,7 @@ SUBSKILLS.md              子技能矩阵
 capabilities.yaml         能力清单（单一真相源）
 golden-workflows.yaml     标准真机验收工作流
 references/              12 个参考文档（211 条踩坑 / API / 图纸底线 / 案例 / 四机制）
-scripts/                  38 个脚本（120+ 函数核心库 + 23 套件 + 四机制）
+scripts/                  39 个脚本（120+ 函数核心库 + 23 套件 + 四机制）
 subskills/                4 个子技能 × 3 文件
 assets/harmonic_profiles.json  谐波齿廓点集
 ```

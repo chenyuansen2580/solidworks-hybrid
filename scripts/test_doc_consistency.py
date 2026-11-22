@@ -365,6 +365,41 @@ def t_swlib_public_functions_documented():
     return "%d 个关键函数均有文档" % len(must_mention)
 
 
+def t_no_stale_global_numbers():
+    """★ 全局数字（能力总数 / 脚本数）在所有 md 里必须与真值一致。
+
+    豆包 2026-11-22 指出 GitHub 上有错：README/SUBSKILLS 写"63 项能力"，
+    实际已是 66；README 目录结构写"38 个脚本"，实际 39。
+    现有 t_capability_numbers 只校验 SKILL.md 的等级数字，覆盖不到这些散落声明。
+
+    ★ 排除**历史案例**里的数字（章节标题形如 "9 零件装配体…30 项能力全覆盖"），
+      那描述的是当时案例，不是当前能力表。
+    """
+    import glob
+    import capabilities_loader as CL
+    ncap = len(CL.capabilities())
+    npy = len(glob.glob(os.path.join(HERE, "*.py")))
+    bad = []
+    for f in glob.glob(os.path.join(ROOT, "**", "*.md"), recursive=True):
+        rel = os.path.relpath(f, ROOT).replace(os.sep, "/")
+        with io.open(f, encoding="utf-8") as fh:
+            for ln, line in enumerate(fh, 1):
+                # 历史案例：章节标题里的 "N 项能力全覆盖验收" 跳过
+                if line.lstrip().startswith("#") and "全覆盖" in line:
+                    continue
+                for pat, truth, label in (
+                        (r"(\d+) 项能力", ncap, "能力总数"),
+                        (r"(\d+) 个脚本", npy, "脚本数"),
+                ):
+                    m = re.search(pat, line)
+                    if m and int(m.group(1)) != truth:
+                        bad.append("%s:%d %s=%s 真值=%d | %s"
+                                   % (rel, ln, label, m.group(1), truth,
+                                      line.strip()[:70]))
+    assert not bad, "全局数字漂移 %d 处:\n    %s" % (len(bad), "\n    ".join(bad[:6]))
+    return "能力=%d 脚本=%d 全库一致" % (ncap, npy)
+
+
 print("=== 文档/能力自洽套件 ===\n")
 chk("能力数字 = yaml", t_capability_numbers)
 chk("踩坑条数 = 实际", t_pitfall_count)
@@ -380,6 +415,7 @@ chk("★ golden 能力已登记", t_golden_capabilities_registered)
 chk("★ 功能脚本有归属", t_feature_scripts_are_registered)
 chk("★ 验收脚本进 run_all", t_verifiers_are_in_run_all)
 chk("★ 公开函数有文档", t_swlib_public_functions_documented)
+chk("★ 全局数字无漂移", t_no_stale_global_numbers)
 
 print()
 if fails:
