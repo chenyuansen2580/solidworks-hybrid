@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# 本地产物：SolidWorks 文档、trace、探测输出
+*.SLDPRT
+*.SLDASM
+*.SLDDRW
+trace*.json
+*_precheck.json
+capability_matrix.json
+assembly_state.json
+_reuse_probe/
+dsh_sw_matrix/
+dsh_sw_parallel/
