@@ -40,20 +40,48 @@
 实测收益：把 35 件里 **15 件纯平移副本（43% 特征）** 识别出来只建母件；
 装配返工从 **5 次全量** 降到 0。
 
+## 依赖（先装底座）
+
+本仓库**不包含**底座 skill 的代码，运行时按路径依赖它们：
+
+| 底座 | 用途 | 来源 |
+|---|---|---|
+| [solidworks-modeling](https://github.com/chenyuansen2580/solidworks-modeling) | 建模（`swlib_v2`） | 本作者，MIT |
+| [solidworks-automation](https://github.com/wzyn20051216/solidworks-automation-skill) | 装配验真（`sw_assembly` / `sw_measure`） | **wzyn20051216**，MIT，非本仓库作者 |
+
+> 第二个底座是第三方开源项目（约 2.3k stars），此处仅作依赖引用，
+> 版权归原作者 wzyn20051216 所有。
+
 ## 安装
 
 ```bash
-git clone https://github.com/<you>/solidworks-hybrid.git \
+# 1) 本 skill
+git clone https://github.com/chenyuansen2580/solidworks-hybrid.git \
   ~/.dsh/skills/solidworks-hybrid
+
+# 2) 建模底座
+git clone https://github.com/chenyuansen2580/solidworks-modeling.git \
+  ~/.dsh/skills/solidworks-modeling
+
+# 3) 装配底座（第三方）
+git clone https://github.com/wzyn20051216/solidworks-automation-skill.git \
+  ~/.dsh/skills/solidworks-automation
 ```
 
-同时需要两个底座 skill 在同级目录（或通过环境变量指向）：
+目录最终形态：
 
 ```
 ~/.dsh/skills/
-  solidworks-hybrid/      ← 本仓库
-  solidworks-modeling/    ← 底座（建模）
-  solidworks-automation/  ← 底座（装配）
+  solidworks-hybrid/       <- 本仓库
+  solidworks-modeling/     <- 建模底座
+  solidworks-automation/   <- 装配底座（第三方）
+```
+
+装到别处也行，用环境变量指过去：
+
+```powershell
+$env:DSH_SW_MODELING   = "D:\\skills\\solidworks-modeling"
+$env:DSH_SW_AUTOMATION = "D:\\skills\\solidworks-automation"
 ```
 
 自检：
