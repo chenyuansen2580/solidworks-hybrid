@@ -46,7 +46,7 @@
 
 | 底座 | 用途 | 来源 |
 |---|---|---|
-| [solidworks-modeling](https://github.com/chenyuansen2580/solidworks-modeling) | 建模（`swlib_v2`） | 本作者，MIT |
+| `solidworks-modeling` | 建模（`swlib_v2`） | 本机自带，未公开发布 |
 | [solidworks-automation](https://github.com/wzyn20051216/solidworks-automation-skill) | 装配验真（`sw_assembly` / `sw_measure`） | **wzyn20051216**，MIT，非本仓库作者 |
 
 > 第二个底座是第三方开源项目（约 2.3k stars），此处仅作依赖引用，
@@ -59,9 +59,9 @@
 git clone https://github.com/chenyuansen2580/solidworks-hybrid.git \
   ~/.dsh/skills/solidworks-hybrid
 
-# 2) 建模底座
-git clone https://github.com/chenyuansen2580/solidworks-modeling.git \
-  ~/.dsh/skills/solidworks-modeling
+# 2) 建模底座（本地 skill，未公开发布，请自备）
+#    放到 ~/.dsh/skills/solidworks-modeling
+#    或用 DSH_SW_MODELING 指向其目录
 
 # 3) 装配底座（第三方）
 git clone https://github.com/wzyn20051216/solidworks-automation-skill.git \
