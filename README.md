@@ -1,5 +1,14 @@
 # solidworks-hybrid
 
+> **仓库名说明 / Repo name note**
+> 本仓库原名 `solidworks-modeling`，现已演进为 **solidworks-hybrid**。
+> 内容以 `solidworks-hybrid` skill 为准；旧的 `solidworks-modeling` 内容完整保存在
+> 分支 [`backup-modeling-skill-20261123`](../../tree/backup-modeling-skill-20261123)。
+>
+> This repository was originally named `solidworks-modeling` and has evolved into
+> **solidworks-hybrid**. The previous `solidworks-modeling` skill is preserved intact
+> in the [`backup-modeling-skill-20261123`](../../tree/backup-modeling-skill-20261123) branch.
+
 > SolidWorks 2022 建模 + 装配验真的**融合技能**。建模走 `swlib_v2` 快而准，
 > 装配验真走 `sw_assembly` + `sw_measure` 真而稳。
 >
