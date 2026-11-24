@@ -16,6 +16,7 @@ trace*.json
 *_precheck.json
 capability_matrix.json
 assembly_state.json
+real_sw_regression.json
 _reuse_probe/
 dsh_sw_matrix/
 dsh_sw_parallel/
