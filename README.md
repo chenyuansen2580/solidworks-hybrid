@@ -1,5 +1,9 @@
 # solidworks-hybrid
 
+[![CI](https://github.com/chenyuansen2580/solidworks-hybrid/actions/workflows/ci.yml/badge.svg)](https://github.com/chenyuansen2580/solidworks-hybrid/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](pyproject.toml)
+
 > SolidWorks 2022 建模 + 装配验真的**融合技能**。建模走 `swlib_v2` 快而准，
 > 装配验真走 `sw_assembly` + `sw_measure` 真而稳。
 >
