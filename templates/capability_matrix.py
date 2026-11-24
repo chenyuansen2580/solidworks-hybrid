@@ -460,11 +460,15 @@ def main():
         return m
 
     # 模板自动发现（B7：不要写死路径）
+    # ★ PRE-02 必须**无条件登记**：它是固定 23 项里的第 3 个前置检查。
+    #   第一版只在模板缺失时登记，导致正常运行只记 22 项，
+    #   与文档声明的「探测总数 23」不一致（静态源码数得对、运行时数不对）。
     _tpl = ASM_TPL or _H_ASM_TPL or None
+    rec("PRE-02", "assembly", "装配模板 AsmEmpty.ASMDOT 是否可定位",
+        "pass" if _tpl else "blocked",
+        {"template": _tpl,
+         "hint": None if _tpl else "设 DSH_SW_ASM_TEMPLATE 指向该文件"})
     if not _tpl:
-        rec("PRE-02", "assembly", "装配模板 AsmEmpty.ASMDOT 是否可定位",
-            "blocked", {"reason": "未找到 AsmEmpty.ASMDOT",
-                        "hint": "设 DSH_SW_ASM_TEMPLATE 指向该文件"})
         return _finish(state, rows)
     asm = sw_connect.new_document(sw, "assembly", template_path=_tpl)
     ad = V.wrap(asm, "IAssemblyDoc")

@@ -148,10 +148,15 @@ def translation_between(bbox_a, bbox_b):
 
 
 def derive_by_saveas(sw, V, master_path, out_path, offset_mm):
-    """用 SaveAs 派生副本，再把草图整体平移 offset_mm。
+    """⚠ 此路径未验证，禁止调用，请改用同零件多实例。
+
+    用 SaveAs 派生副本，再把草图整体平移 offset_mm。
 
     ★ 状态：**未实现，且不再需要**（2026-11-23 判定）。
       实测证明「同零件多实例」路径完全够用，见下。
+      SaveAs 派生会带来面引用断链风险，本机未验证，因此本函数直接抛
+      NotImplementedError —— 读到函数名不要调它，用 plan_instances() +
+      set_component_transform 平移实例即可。
 
     多实例路径已验证通过（`templates/verify_reuse.py`，结果 `trace_reuse.json`）：
 

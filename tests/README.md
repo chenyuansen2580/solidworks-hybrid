@@ -7,6 +7,13 @@ pip install -e ".[test]"
 python -m pytest -q
 ```
 
+> **安装前提**：`pyproject.toml` 里必须有
+> `[tool.setuptools]` 下的 `packages = []` 与 `py-modules = []`。
+> 缺了这两行，setuptools 会把 `templates/` 和 `references/` 当成两个顶层包，
+> `pip install -e` 直接失败：
+> `error: Multiple top-level packages discovered in a flat-layout`。
+> 删之前先想清楚 —— CI 的 Install 步骤就靠它过。
+
 ## 覆盖范围
 
 | 文件 | 内容 |

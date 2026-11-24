@@ -86,7 +86,7 @@ $env:SW_ATTACH_EXISTING_DISPATCH = "1"
 ---
 
 
-## 0. 开始前：先跑能力矩阵（1 次顶 21 个探针）
+## 0. 开始前：先跑能力矩阵（一次跑完全部 23 项）
 
 **不要用一堆 `probe_*.py` 逐个试 API。** 一次会话跑完：
 
@@ -95,15 +95,24 @@ $env:SW_ATTACH_EXISTING_DISPATCH = "1"
 python templates\capability_matrix.py
 ```
 
-输出 `%TEMP%\dsh_sw_matrix\capability_matrix.json`，23 项探测 + 2 项前置健康检查。
+输出 `%TEMP%\dsh_sw_matrix\capability_matrix.json`。
+
+### 数字口径（全库唯一口径，勿再改）
+
+| 口径 | 数值 | 构成 |
+|---|---|---|
+| **探测总数** | **23** | 能力探针 20 + 前置健康检查 3 |
+| 能力探针 | 20 | `M01`–`M20`，`@probe` 装饰器注册 |
+| 前置健康检查 | 3 | `PRE-00`（会话基线）/ `PRE-01`（母件存盘健康）/ `PRE-02`（装配模板可定位） |
 
 **本机 SW2022 基线（2026-11-23 实测，`pass_with_limitations`）：**
 
-| 项 | 结果 |
+| 项 | 数量 |
 |---|---|
-| 21 项 | pass |
-| 1 项 | fail（M04 revolve，有等价替代） |
-| 0 项 | blocked |
+| pass | **22** |
+| fail（M04 revolve，有等价替代） | **1** |
+| blocked | **0** |
+| **合计** | **23** ✅ 与探测总数一致 |
 
 判定语义：
 
@@ -414,7 +423,7 @@ trace.json    执行留痕（推荐）
 |---|---|---|
 | 逐件建同形状零件 | 白建 43% 特征 / 44% 文件 | `plan_instances()` 先分组，只建母件 |
 | 装配写成原子块 | 一歪就 N 次全量重来 | `AssemblySession` 断点续建 |
-| 一个细节写一个 probe 脚本 | 21 个探针，9 个各自重建装配环境 | `capability_matrix.py` 一次跑完 22 项 |
+| 一个细节写一个 probe 脚本 | 曾散落 21 个临时探针脚本，9 个各自重建装配环境 | `capability_matrix.py` 一次跑完全部 23 项（20 能力 + 3 前置） |
 | 断言 pre/post 各跑一遍全量 | 70 次断言（含 35 次冗余特征树） | post 只验体积/字节 |
 | 等装配完才查干涉 | 6 处假干涉最后才发现 | `precheck_interference.py` 建模前跑 |
 | 材料名试错 | 13 个候选全静默失败 | 先读 `.sldmat` 拿实名 |

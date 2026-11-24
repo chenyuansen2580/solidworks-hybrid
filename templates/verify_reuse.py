@@ -14,7 +14,8 @@
 只用：
   建模 = swlib_v2（旧 skill）
   装配 = sw_connect + sw_assembly + sw_measure（新 skill）
-输出：D:\\yysls\\ballscrew_slide_v1\\trace_reuse.json
+输出：<WORKDIR>/trace_reuse.json
+      WORKDIR 解析顺序：DSH_SW_WORKDIR -> 系统临时目录/dsh_sw_reuse -> 仓库 .work/
 """
 import json
 import os

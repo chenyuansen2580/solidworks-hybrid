@@ -32,12 +32,20 @@ dependencies = [
 test = ["pytest>=7.0"]
 
 [project.urls]
+# 注意：仓库已在 GitHub 上改名为 solidworks-hybrid；
+# 旧名 solidworks-modeling 由 GitHub 自动重定向到此处。
 Homepage = "https://github.com/chenyuansen2580/solidworks-hybrid"
 Issues = "https://github.com/chenyuansen2580/solidworks-hybrid/issues"
 
 [tool.setuptools]
-# 本仓库是 skill 目录结构（templates/ + references/ + tests/），
-# 不打包成可 import 的包；这里只声明随 sdist/wheel 分发的数据文件。
+# ★ 本仓库是 skill 目录结构（templates/ + references/ + tests/ + examples/），
+#   不是可 import 的 Python 包。必须显式禁用自动发现，否则 setuptools 会把
+#   templates/ 和 references/ 当成两个顶层包，`pip install -e` 直接失败：
+#     error: Multiple top-level packages discovered in a flat-layout:
+#            ['templates', 'references']
+#   这两行是必须的，删掉 CI 的 Install 步骤就挂。
+packages = []
+py-modules = []
 include-package-data = false
 
 [tool.setuptools.package-data]

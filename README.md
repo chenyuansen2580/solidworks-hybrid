@@ -1,19 +1,41 @@
 # solidworks-hybrid
 
-> **仓库名说明 / Repo name note**
-> 本仓库原名 `solidworks-modeling`，现已演进为 **solidworks-hybrid**。
-> 内容以 `solidworks-hybrid` skill 为准；旧的 `solidworks-modeling` 内容完整保存在
-> 分支 [`backup-modeling-skill-20261123`](../../tree/backup-modeling-skill-20261123)。
->
-> This repository was originally named `solidworks-modeling` and has evolved into
-> **solidworks-hybrid**. The previous `solidworks-modeling` skill is preserved intact
-> in the [`backup-modeling-skill-20261123`](../../tree/backup-modeling-skill-20261123) branch.
-
 > SolidWorks 2022 建模 + 装配验真的**融合技能**。建模走 `swlib_v2` 快而准，
 > 装配验真走 `sw_assembly` + `sw_measure` 真而稳。
 >
 > A hybrid skill for SolidWorks 2022: fast parametric modelling via `swlib_v2`,
 > verifiable assembly checks via `sw_assembly` + `sw_measure`.
+
+## ⚠ 先看这里：这个仓库能直接跑什么
+
+**clone 下来就能直接跑（纯 Python，无需 SolidWorks）的只有两个模块：**
+
+| 模块 | 作用 | 命令 |
+|---|---|---|
+| `templates/hybrid_reuse.py` | 复用分析（识别纯平移副本，算出只需建几件） | `python templates/hybrid_reuse.py` |
+| `templates/precheck_interference.py` | 建模前解析干涉预检（0.1 秒，不碰 CAD） | `python templates/precheck_interference.py examples/theory.json` |
+
+**建模与装配验真需要自备底座，本仓库不含底座代码：**
+
+| 阶段 | 需要什么 | 怎么来 |
+|---|---|---|
+| 建模 | `solidworks-modeling` 底座（`swlib_v2`） | **未公开发布**，需自备；用 `DSH_SW_MODELING` 指向其目录 |
+| 装配验真 | `solidworks-automation` 底座 | `git clone https://github.com/wzyn20051216/solidworks-automation-skill`（MIT，第三方） |
+
+缺底座时建模会直接报错，这是**预期行为**，不是 bug：
+
+```
+RuntimeError: 缺少底座 skill，无法继续：
+  - solidworks-modeling (swlib_v2.py) — 设 DSH_SW_MODELING 环境变量
+```
+
+> 本仓库**不会**把底座代码抽进来。底座一行不动，只做路径依赖。
+
+## 仓库名说明
+
+> 本仓库原名 `solidworks-modeling`，现已演进为 **solidworks-hybrid**。
+> 旧的 `solidworks-modeling` 内容完整保存在分支
+> [`backup-modeling-skill-20261123`](../../tree/backup-modeling-skill-20261123)。
 
 ## 为什么需要它
 
@@ -199,7 +221,7 @@ references/hybrid-contract.md 完整契约 + 13 条硬约束实证
 templates/
   hybrid_common.py            路径自动发现 + 环境校验
   hybrid_reuse.py             复用分组 + 装配断点续建
-  capability_matrix.py        23 项能力探测，一次会话跑完
+  capability_matrix.py        23 项探测（20 能力探针 M01–M20 + 3 前置健康检查），一次会话跑完
   precheck_interference.py    建模前解析预检
   assembly_template.py        装配模板（按 B1–B7 校准）
   model_part_template.py      建模模板

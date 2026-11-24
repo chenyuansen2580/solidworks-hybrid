@@ -37,6 +37,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # pyproject.toml 的 [tool.setuptools] 必须有 packages=[] 与 py-modules=[]，
+      # 否则 setuptools 自动发现会把 templates/ 和 references/ 当成两个顶层包，
+      # 本步骤会报 "Multiple top-level packages discovered in a flat-layout"。
       - name: Install (pywin32 skipped on Linux by marker)
         run: |
           python -m pip install --upgrade pip
