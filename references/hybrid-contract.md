@@ -409,6 +409,35 @@ for c in comps:
 
 ---
 
+#### B7. 全流程只 `connect()` **一次**，环境变量必须在任何 import 之前设
+
+`SW_ATTACH_EXISTING_DISPATCH="1"` 若在 `import` 之后才设，或中途再 `connect()` 一次，
+可能附着到**另一个** SW 实例。症状极具迷惑性：
+
+> **建模全部正常，装配 `AddComponent5` 恒返回 None。**
+
+原因：两个实例的文档上下文不同，装配体所在的实例里看不到另一实例刚插入的组件。
+
+```python
+# 正确：脚本顶部、任何 import 之前
+import os
+os.environ["SW_ATTACH_EXISTING_DISPATCH"] = "1"
+
+# 然后全程只 connect 一次，把 sw 传给建模与装配两段
+import swlib_v2 as V
+sw = V.connect(version=2022)
+# ... 建模用同一个 sw ...
+# ... 装配也用同一个 sw，不要再 sw_connect.connect_solidworks() ...
+```
+
+实测证据：`verify_reuse.py` 第一版先建模成功、再第二次 `connect()` 做装配，
+日志出现 `Dispatch(启动新实例 SldWorks.Application.30)`，随后插入直接失败。
+
+**排查口诀**：看到 `Dispatch(启动新实例)` 就是 attach 没生效，
+先查环境变量设置时机与 `connect()` 调用次数。
+
+---
+
 ## 7. 默认停止点
 
 ```yaml

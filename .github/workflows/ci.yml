@@ -1,0 +1,88 @@
+name: CI
+
+# 目标：在**没有 SolidWorks、没有 pywin32** 的 Linux 环境验证
+#   * 纯 Python 逻辑（形状签名 / 分组 / 断点续建 / 数值口径）
+#   * 解析干涉预检（正负对照）
+#   * 数字守卫（文档声明 vs 实际）
+#
+# ★ 本工作流**不代表**真机 CAD 验证通过。
+#   真机结论（SW2022 SP5 / 30.5.0）仅在本机实测，见 trace*.json 与 README。
+#   请勿把本 CI 绿灯读作「远端 CAD 验证通过」。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Linux, no SolidWorks)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install (pywin32 skipped on Linux by marker)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Assert no CAD stack present
+        run: python tests/check_environment.py --strict
+
+      - name: Run pytest
+        run: python -m pytest -q
+
+      - name: Self-test hybrid_reuse (bundled example)
+        run: python templates/hybrid_reuse.py
+
+      - name: Self-test hybrid_reuse (builtin fallback)
+        run: |
+          # 临时遮蔽 examples/theory.json，强制走内置最小示例回退路径。
+          # 期望：打印 [SKIP] 并仍然 [PASS]，退出码 0。
+          mv examples/theory.json examples/theory.json.bak
+          python templates/hybrid_reuse.py
+          rc=$?
+          mv examples/theory.json.bak examples/theory.json
+          exit $rc
+
+      - name: Number guard
+        run: python tests/check_numbers.py
+
+  portability:
+    name: portability (stdlib only, no install)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 不安装任何依赖，验证核心模块只依赖标准库
+      - name: hybrid_reuse runs on bare stdlib
+        run: python templates/hybrid_reuse.py
+
+      - name: precheck runs on bare stdlib
+        run: |
+          python templates/precheck_interference.py examples/theory.json
+          rc=$?
+          # 退出码 1 表示有 bbox 相交但需人工判读，属正常返回；
+          # 2 是用法错误，必须失败。
+          if [ "$rc" = "2" ]; then exit 2; fi
+          echo "precheck exit=$rc (0=no candidate, 1=candidates present)"

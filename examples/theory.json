@@ -1,0 +1,220 @@
+{
+  "_comment": "最小示例 theory.json —— 4 个零件：3 个互为纯平移副本的方块（1 母件 + 2 副本）+ 1 根不同形状的轴。因此 4 实例 / 2 个唯一形状 / 只需建 2 件。字段严格对齐 hybrid_reuse.plan_families 的 dict 契约：键=零件名，值含 terms + theory_bbox_mm。坐标单位 mm。",
+  "meta": {
+    "project": "hybrid-example",
+    "note": "供 README 快速开始与 tests 使用的最小可运行样例，不含任何 SolidWorks 依赖",
+    "part_count": 4,
+    "unique_shapes": 2,
+    "instances_to_build": 2
+  },
+  "coordinate_contract": {
+    "x": "+X",
+    "y": "+Y",
+    "z": "+Z",
+    "units": "mm",
+    "origin": "底座下表面中心"
+  },
+  "parts": {
+    "base_block_a": {
+      "cn": "示例方块 A（母件）",
+      "material": "6061 合金",
+      "theory_volume_mm3": 7440.0,
+      "volume_formula": "Σbox − 2×(π·3²·10)",
+      "theory_bbox_mm": [
+        -20.0,
+        -10.0,
+        0.0,
+        20.0,
+        10.0,
+        10.0
+      ],
+      "bbox_size_mm": [
+        40.0,
+        20.0,
+        10.0
+      ],
+      "terms": [
+        {
+          "kind": "box",
+          "bbox": [
+            -20.0,
+            -10.0,
+            0.0,
+            20.0,
+            10.0,
+            10.0
+          ],
+          "volume": 8000.0
+        },
+        {
+          "kind": "hole",
+          "axis": "Z",
+          "center": [
+            10.0,
+            0.0
+          ],
+          "r": 3.0,
+          "len": 10.0,
+          "volume": -282.7433
+        }
+      ],
+      "primitive_count": {
+        "add": 1,
+        "sub": 2
+      },
+      "issues": [],
+      "hard_issues": []
+    },
+    "base_block_b": {
+      "cn": "示例方块 B（A 的纯平移副本，+60mm X）",
+      "material": "6061 合金",
+      "theory_volume_mm3": 7440.0,
+      "volume_formula": "Σbox − 2×(π·3²·10)",
+      "theory_bbox_mm": [
+        40.0,
+        -10.0,
+        0.0,
+        80.0,
+        10.0,
+        10.0
+      ],
+      "bbox_size_mm": [
+        40.0,
+        20.0,
+        10.0
+      ],
+      "terms": [
+        {
+          "kind": "box",
+          "bbox": [
+            40.0,
+            -10.0,
+            0.0,
+            80.0,
+            10.0,
+            10.0
+          ],
+          "volume": 8000.0
+        },
+        {
+          "kind": "hole",
+          "axis": "Z",
+          "center": [
+            70.0,
+            0.0
+          ],
+          "r": 3.0,
+          "len": 10.0,
+          "volume": -282.7433
+        }
+      ],
+      "primitive_count": {
+        "add": 1,
+        "sub": 2
+      },
+      "issues": [],
+      "hard_issues": []
+    },
+    "base_block_c": {
+      "cn": "示例方块 C（A 的纯平移副本，+40mm Y）",
+      "material": "6061 合金",
+      "theory_volume_mm3": 7440.0,
+      "volume_formula": "Σbox − 2×(π·3²·10)",
+      "theory_bbox_mm": [
+        -20.0,
+        30.0,
+        0.0,
+        20.0,
+        50.0,
+        10.0
+      ],
+      "bbox_size_mm": [
+        40.0,
+        20.0,
+        10.0
+      ],
+      "terms": [
+        {
+          "kind": "box",
+          "bbox": [
+            -20.0,
+            30.0,
+            0.0,
+            20.0,
+            50.0,
+            10.0
+          ],
+          "volume": 8000.0
+        },
+        {
+          "kind": "hole",
+          "axis": "Z",
+          "center": [
+            10.0,
+            40.0
+          ],
+          "r": 3.0,
+          "len": 10.0,
+          "volume": -282.7433
+        }
+      ],
+      "primitive_count": {
+        "add": 1,
+        "sub": 2
+      },
+      "issues": [],
+      "hard_issues": []
+    },
+    "shaft": {
+      "cn": "示例轴（回转族，与方块不同形状）",
+      "material": "合金钢",
+      "theory_volume_mm3": 66171.68,
+      "volume_formula": "π·Σ(r_add²−r_sub²)·ΔX",
+      "theory_bbox_mm": [
+        -150.0,
+        192.0,
+        -8.0,
+        240.0,
+        208.0,
+        8.0
+      ],
+      "bbox_size_mm": [
+        390.0,
+        16.0,
+        16.0
+      ],
+      "terms": [
+        {
+          "kind": "revolve_seg",
+          "axis": "X",
+          "t": [
+            -150.0,
+            140.0
+          ],
+          "r_add": 8.0,
+          "r_sub": 0.0,
+          "len": 290.0,
+          "volume": 58318.58
+        },
+        {
+          "kind": "revolve_seg",
+          "axis": "X",
+          "t": [
+            140.0,
+            240.0
+          ],
+          "r_add": 5.0,
+          "r_sub": 0.0,
+          "len": 100.0,
+          "volume": 7853.1
+        }
+      ],
+      "primitive_count": {
+        "add": 2,
+        "sub": 0
+      },
+      "issues": [],
+      "hard_issues": []
+    }
+  }
+}

@@ -24,15 +24,39 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hybrid_common as _H
 OLD = _H.OLD_SCRIPTS
 NEW = _H.NEW_SCRIPTS
-OUT_DIR = r"D:\yysls\ballscrew_slide_v1\_reuse_probe"
-RESULT = r"D:\yysls\ballscrew_slide_v1\trace_reuse.json"
-ASM_TPL = r"C:\ProgramData\SOLIDWORKS\SOLIDWORKS 2022\templates\AsmEmpty.ASMDOT"
+
+
+def resolve_workdir():
+    """工作目录解析（无硬编码盘符）。
+
+    顺序：
+      1) 环境变量 DSH_SW_WORKDIR
+      2) 环境变量 TEMP/TMP 下的 dsh_sw_reuse
+      3) 仓库内 .work/（.gitignore 已排除）
+    """
+    wd = os.environ.get("DSH_SW_WORKDIR")
+    if wd:
+        return os.path.abspath(wd)
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP")
+    if tmp:
+        return os.path.join(tmp, "dsh_sw_reuse")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", ".work")
+
+
+WORKDIR = resolve_workdir()
+OUT_DIR = os.path.join(WORKDIR, "_reuse_probe")
+RESULT = os.path.join(WORKDIR, "trace_reuse.json")
+ASM_TPL = _H.EMPTY_ASM
 
 # ★ 必须在 import/connect 之前设，否则 GetActiveObject 失败会 Dispatch 出第二个实例，
 #   两个实例的文档上下文不同 -> AddComponent5 拿不到刚插入的组件而返回 None。
 os.environ["SW_ATTACH_EXISTING_DISPATCH"] = "1"
 
 os.makedirs(OUT_DIR, exist_ok=True)
+if not OLD:
+    sys.exit("[SKIP] 未找到 solidworks-modeling 底座，无法验证多实例复用。"
+             "\n       设 DSH_SW_MODELING 指向其目录后重试。退出码 0。")
 sys.path.insert(0, OLD)
 import swlib_v2 as V    # noqa: E402
 import swlib as L       # noqa: E402

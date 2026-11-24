@@ -26,7 +26,18 @@ import sys
 import time
 
 N_DEFAULT = 2
-OUT_DIR = os.path.join(os.environ.get("TEMP", "."), "dsh_sw_parallel")
+def _workdir():
+    """工作目录：DSH_SW_WORKDIR 优先，否则 TEMP/dsh_sw_parallel，否则仓库 .work/。"""
+    wd = os.environ.get("DSH_SW_WORKDIR")
+    if wd:
+        return os.path.abspath(wd)
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP")
+    if tmp:
+        return os.path.join(tmp, "dsh_sw_parallel")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".work")
+
+
+OUT_DIR = _workdir()
 RESULT = os.path.join(OUT_DIR, "verify_parallel.json")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hybrid_common as _H

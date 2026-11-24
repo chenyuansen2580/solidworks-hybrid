@@ -101,44 +101,114 @@ python templates\hybrid_common.py
 
 ## 快速开始
 
+仓库自带可运行示例 `examples/theory.json`（4 个零件，其中 3 个互为纯平移副本，
+所以只需建 2 件、装 4 个实例）。
+
+### 1) 复用分析（纯 Python，不碰 SolidWorks）
+
+```python
+import json, sys, os
+sys.path.insert(0, os.path.join("templates"))
+from hybrid_reuse import plan_instances, instance_report
+
+# theory 必须是 dict：{零件名: {terms: [...], theory_bbox_mm: [...]}}
+theory = json.load(open("examples/theory.json", encoding="utf-8"))
+rows = plan_instances(theory["parts"])
+print(instance_report(rows))
+# -> {'to_build': 2, 'instances': 4, 'saved_parts': 2, 'masters': [...]}
+```
+
+一行命令版：
+
+```bash
+python templates/hybrid_reuse.py                       # 用仓库内 examples
+python templates/hybrid_reuse.py path/to/theory.json   # 用你自己的
+```
+
+没有外部 `theory.json` 时会**回退到内置最小示例**并打印 `[SKIP]`，
+退出码仍为 0，不会崩。
+
+### 2) 解析干涉预检（纯 Python，约 0.1 秒）
+
+```bash
+python templates/precheck_interference.py examples/theory.json
+```
+
+退出码：`0` 无可疑候选 / `1` 有候选需人工判读 / `2` 用法错误。
+这只做建模前的早期筛查，**不能替代**装配后的
+`sw_measure.inspect_interference`。
+
+### 3) 建模（旧底座 `swlib_v2`）
+
 ```python
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "templates"))
 import hybrid_common as H
-H.setup()
+H.setup()                       # 校验底座存在 + 设 SW_ATTACH_EXISTING_DISPATCH
 
-# 1) 建模前：先算复用（纯 Python，不碰 SolidWorks）
-from hybrid_reuse import plan_instances, instance_report
-rows = plan_instances(theory["parts"])
-print(instance_report(rows))        # 要建几件 / 装配几个实例 / 省几件
-
-# 2) 建模前：解析预检（0.1 秒，不碰 SolidWorks）
-#    python templates/precheck_interference.py theory.json
-
-# 3) 建模（旧底座）
 with H.use_scripts("model"):
     import swlib_v2 as V
+```
 
-# 4) 装配（新底座），带断点续建
+### 4) 装配（新底座，带断点续建）
+
+```python
 from hybrid_reuse import AssemblySession
 sess = AssemblySession("assembly_state.json")
-sess.load(resume=True)
+sess.load(resume=True)          # 有断点就续，不整轮重来
 ```
+
+## 工作目录
+
+所有脚本都不写死盘符，按以下顺序解析输出目录：
+
+| 顺序 | 来源 |
+|---|---|
+| 1 | 环境变量 `DSH_SW_WORKDIR` |
+| 2 | 系统临时目录下的 `dsh_sw_*` 子目录 |
+| 3 | 仓库内 `.work/`（已在 `.gitignore` 中） |
+
+`theory.json` 的查找顺序：命令行参数 → `DSH_SW_THEORY` →
+`DSH_SW_WORKDIR/theory.json` → 仓库内 `examples/theory.json` → 内置示例。
+
+## 测试与 CI
+
+```bash
+pip install -e ".[test]"
+python -m pytest -q
+```
+
+全部测试**不依赖 SolidWorks / pywin32**，Linux 可直接跑。
+CI（`.github/workflows/ci.yml`）在 ubuntu-latest × Python 3.10–3.12 上跑：
+
+- pytest 全量
+- `hybrid_reuse.py` 自检（含内置回退路径）
+- 数字守卫（文档声明的探测项数 / 约束条数与实际一致）
+- 硬编码机器路径检查
+
+> ⚠ **CI 绿灯 ≠ 真机 CAD 验证通过。** CI 只验证不依赖 CAD 的纯逻辑
+> （形状签名、分组、断点续建、解析预检、文档一致性）。
+> 体积/bbox/配合/干涉等结论只能在装了 SolidWorks 2022 的 Windows 上跑，
+> 在本仓库中**仅对本机 SW2022 SP5 (30.5.0) 有效**。
 
 ## 目录
 
 ```
-SKILL.md                      技能主文档（456 行）
+SKILL.md                      技能主文档
 references/hybrid-contract.md 完整契约 + 13 条硬约束实证
 templates/
   hybrid_common.py            路径自动发现 + 环境校验
   hybrid_reuse.py             复用分组 + 装配断点续建
-  capability_matrix.py        22 项能力探测，一次会话跑完
+  capability_matrix.py        23 项能力探测，一次会话跑完
   precheck_interference.py    建模前解析预检
   assembly_template.py        装配模板（按 B1–B7 校准）
   model_part_template.py      建模模板
   verify_reuse.py             多实例复用验证（6/6 实测）
   verify_parallel.py          多进程并行验证（结论：不可行）
+examples/
+  theory.json                 4 零件可运行示例（3 个纯平移副本）
+tests/                        纯 Python 测试，Linux 可跑，不依赖 SW
+pyproject.toml                打包与依赖声明（pywin32 仅 win32）
 ```
 
 ## 已实测的边界

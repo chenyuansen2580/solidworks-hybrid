@@ -23,7 +23,18 @@ import os
 import sys
 import traceback
 
-OUT_DIR = os.path.join(os.environ.get("TEMP", "."), "dsh_sw_matrix")
+def _workdir():
+    """工作目录：DSH_SW_WORKDIR 优先，否则 TEMP/dsh_sw_matrix，否则仓库 .work/。"""
+    wd = os.environ.get("DSH_SW_WORKDIR")
+    if wd:
+        return os.path.abspath(wd)
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP")
+    if tmp:
+        return os.path.join(tmp, "dsh_sw_matrix")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".work")
+
+
+OUT_DIR = _workdir()
 RESULT = os.path.join(OUT_DIR, "capability_matrix.json")
 
 # ★ B7：必须在任何 import 之前设，否则会 Dispatch 出第二个 SW 实例
@@ -33,7 +44,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hybrid_common as _H
 OLD = _H.OLD_SCRIPTS
 NEW = _H.NEW_SCRIPTS
-ASM_TPL = r"C:\ProgramData\SOLIDWORKS\SOLIDWORKS 2022\templates\AsmEmpty.ASMDOT"
+_H_ASM_TPL = _H.EMPTY_ASM
+ASM_TPL = None      # 运行时由 hybrid_common.find_asmdot() 解析
 
 MASTER = os.path.join(OUT_DIR, "m_master.SLDPRT")
 MASTER2 = os.path.join(OUT_DIR, "m_second.SLDPRT")
@@ -447,7 +459,14 @@ def main():
                 return m if default is None else default
         return m
 
-    asm = sw_connect.new_document(sw, "assembly", template_path=ASM_TPL)
+    # 模板自动发现（B7：不要写死路径）
+    _tpl = ASM_TPL or _H_ASM_TPL or None
+    if not _tpl:
+        rec("PRE-02", "assembly", "装配模板 AsmEmpty.ASMDOT 是否可定位",
+            "blocked", {"reason": "未找到 AsmEmpty.ASMDOT",
+                        "hint": "设 DSH_SW_ASM_TEMPLATE 指向该文件"})
+        return _finish(state, rows)
+    asm = sw_connect.new_document(sw, "assembly", template_path=_tpl)
     ad = V.wrap(asm, "IAssemblyDoc")
     doc = V.wrap(asm, "IModelDoc2")
     title = str(px(asm, "GetTitle"))

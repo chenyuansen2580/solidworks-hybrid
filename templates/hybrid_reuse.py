@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 
 # ----------------------------------------------------------------- 形状签名
 def _r(v, nd=3):
@@ -302,24 +303,165 @@ class AssemblySession:
 
 
 # ------------------------------------------------------------------ selftest
-def _selftest():
-    """用真实 theory.json 验证分组逻辑（不碰 SolidWorks）。"""
-    import sys
-    p = sys.argv[1] if len(sys.argv) > 1 else \
-        r"D:\yysls\ballscrew_slide_v1\theory.json"
-    with open(p, "r", encoding="utf-8") as f:
+# 仓库/包根目录（examples/ 在其下）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PKG_ROOT = os.path.dirname(_HERE)
+_EXAMPLE = os.path.join(_PKG_ROOT, "examples", "theory.json")
+
+
+def _builtin_minimal_theory():
+    """内置最小示例：3 个零件（2 个互为纯平移副本 + 1 根不同形状的轴）。
+
+    用途：外部 theory.json 缺失时的兜底，保证自检永远能跑断言而不是崩。
+    与 examples/theory.json 的字段契约完全一致，只是件数更少。
+    """
+    def block(x0, y0):
+        return {
+            "cn": "内置方块 @(%g,%g)" % (x0, y0),
+            "material": "6061 合金",
+            "theory_volume_mm3": 8000.0,
+            "volume_formula": "box",
+            "theory_bbox_mm": [x0, y0, 0.0, x0 + 20.0, y0 + 10.0, 10.0],
+            "bbox_size_mm": [20.0, 10.0, 10.0],
+            "terms": [{"kind": "box",
+                       "bbox": [x0, y0, 0.0, x0 + 20.0, y0 + 10.0, 10.0],
+                       "volume": 8000.0}],
+            "primitive_count": {"add": 1, "sub": 0},
+            "issues": [],
+            "hard_issues": [],
+        }
+
+    return {
+        "meta": {"project": "builtin-minimal", "part_count": 3},
+        "parts": {
+            "blk_a": block(0.0, 0.0),
+            "blk_b": block(40.0, 0.0),      # blk_a 的纯平移副本 (+40, 0, 0)
+            "shaft": {
+                "cn": "内置轴",
+                "material": "合金钢",
+                "theory_volume_mm3": 3141.59,
+                "volume_formula": "π·r²·L",
+                "theory_bbox_mm": [-50.0, -5.0, -5.0, 50.0, 5.0, 5.0],
+                "bbox_size_mm": [100.0, 10.0, 10.0],
+                "terms": [{"kind": "revolve_seg", "axis": "X",
+                           "t": [-50.0, 50.0], "r_add": 5.0, "r_sub": 0.0,
+                           "len": 100.0, "volume": 3141.59}],
+                "primitive_count": {"add": 1, "sub": 0},
+                "issues": [],
+                "hard_issues": [],
+            },
+        },
+    }
+
+
+def resolve_theory_path(cli_arg=None):
+    """解析 theory.json 路径。
+
+    顺序：
+      1) 命令行参数
+      2) 环境变量 DSH_SW_THEORY
+      3) 环境变量 DSH_SW_WORKDIR 下的 theory.json
+      4) 仓库内 examples/theory.json
+      返回 (path 或 None, 来源说明)
+    """
+    if cli_arg:
+        return (cli_arg if os.path.isfile(cli_arg) else None), "argv"
+    env_theory = os.environ.get("DSH_SW_THEORY")
+    if env_theory:
+        return (env_theory if os.path.isfile(env_theory) else None), "DSH_SW_THEORY"
+    workdir = os.environ.get("DSH_SW_WORKDIR")
+    if workdir:
+        cand = os.path.join(workdir, "theory.json")
+        return (cand if os.path.isfile(cand) else None), "DSH_SW_WORKDIR"
+    if os.path.isfile(_EXAMPLE):
+        return _EXAMPLE, "examples/theory.json"
+    return None, "builtin"
+
+
+def load_theory(cli_arg=None):
+    """加载 theory.json；外部缺失时回退内置最小示例（不抛错）。
+
+    返回 (theory_dict, info)；info 含 source / path / fell_back。
+    """
+    path, source = resolve_theory_path(cli_arg)
+    if path is None:
+        return _builtin_minimal_theory(), {
+            "source": "builtin", "path": None, "fell_back": True,
+            "reason": "未找到外部 theory.json（argv / DSH_SW_THEORY / "
+                      "DSH_SW_WORKDIR / examples 均未命中）",
+        }
+    with open(path, "r", encoding="utf-8") as f:
         theory = json.load(f)
-    fams = plan_families(theory["parts"])
+    return theory, {"source": source, "path": path, "fell_back": False}
+
+
+def _selftest(argv=None):
+    """自检：分组 / 实例 / 平移差 三组断言。不依赖 SolidWorks，不写死路径。
+
+    退出码：0 = 全部 PASS（含回退到内置示例）
+            1 = 断言失败
+    """
+    argv = list(sys.argv[1:] if argv is None else argv)
+    cli = argv[0] if argv and not argv[0].startswith("-") else None
+
+    theory, info = load_theory(cli)
+    parts = theory["parts"]
+    print("theory 来源: %s%s" % (info["source"],
+                                 ("  (%s)" % info["path"]) if info["path"] else ""))
+    if info["fell_back"]:
+        print("  [SKIP] %s -> 回退内置最小示例继续跑断言" % info["reason"])
+
+    fams = plan_families(parts)
     rep = family_report(fams)
     print(json.dumps(rep, ensure_ascii=False, indent=2))
 
-    # 断言：分组结果必须覆盖全部零件
+    fails = []
+
+    # 断言 1：分组必须覆盖全部零件，且无重复
     covered = [n for f in fams for n in f["members"]]
-    assert sorted(covered) == sorted(theory["parts"].keys()), "分组漏件"
-    print("\n[OK] 覆盖 %d 件 / %d 个唯一形状 / 可复用 %d 件 (%.1f%%)"
+    if sorted(covered) != sorted(parts.keys()):
+        fails.append("分组漏件或多件: covered=%d parts=%d"
+                     % (len(covered), len(parts)))
+    if len(covered) != len(set(covered)):
+        fails.append("同一零件被分到多个组")
+
+    # 断言 2：副本必须是母件的纯平移
+    for f in fams:
+        mb = parts[f["master"]]["theory_bbox_mm"]
+        for d in f["derived"]:
+            db = parts[d]["theory_bbox_mm"]
+            try:
+                off = translation_between(mb, db)
+            except ValueError as e:
+                fails.append("%s 不是 %s 的纯平移: %s" % (d, f["master"], e))
+                continue
+            if all(abs(v) < 1e-9 for v in off):
+                fails.append("%s 与 %s 偏移为零，不应拆成两件" % (d, f["master"]))
+
+    # 断言 3：实例表自洽
+    rows = plan_instances(parts)
+    irep = instance_report(rows)
+    if irep["instances"] != len(parts):
+        fails.append("实例数 %d != 零件数 %d" % (irep["instances"], len(parts)))
+    if irep["to_build"] != rep["unique_shapes"]:
+        fails.append("要建件数 %d != 唯一形状数 %d"
+                     % (irep["to_build"], rep["unique_shapes"]))
+    if irep["saved_parts"] != rep["reusable_copies"]:
+        fails.append("节省件数 %d != 可复用副本数 %d"
+                     % (irep["saved_parts"], rep["reusable_copies"]))
+
+    print()
+    if fails:
+        for x in fails:
+            print("  [FAIL]", x)
+        print("\n[FAIL] 自检未通过，共 %d 条" % len(fails))
+        return 1
+
+    print("[PASS] 覆盖 %d 件 / %d 个唯一形状 / 可复用 %d 件 (%.1f%%) / 要建 %d 件"
           % (rep["total_instances"], rep["unique_shapes"],
-             rep["reusable_copies"], rep["saving_pct"]))
+             rep["reusable_copies"], rep["saving_pct"], irep["to_build"]))
+    return 0
 
 
 if __name__ == "__main__":
-    _selftest()
+    sys.exit(_selftest())

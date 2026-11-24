@@ -1,0 +1,52 @@
+# -*- coding: utf-8 -*-
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "solidworks-hybrid"
+version = "0.1.0"
+description = "SolidWorks 2022 建模 + 装配验真融合技能（swlib_v2 建模 / sw_assembly + sw_measure 验真）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "chenyuansen2580" }]
+keywords = ["solidworks", "cad", "skill", "dsh", "automation"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+    "Topic :: Scientific/Engineering",
+]
+
+# ★ CAD 依赖只在 Windows 上需要；Linux CI 不装 pywin32 也能跑测试
+dependencies = [
+    "pyyaml>=6.0",
+    "pywin32>=305; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/chenyuansen2580/solidworks-hybrid"
+Issues = "https://github.com/chenyuansen2580/solidworks-hybrid/issues"
+
+[tool.setuptools]
+# 本仓库是 skill 目录结构（templates/ + references/ + tests/），
+# 不打包成可 import 的包；这里只声明随 sdist/wheel 分发的数据文件。
+include-package-data = false
+
+[tool.setuptools.package-data]
+"*" = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

@@ -95,7 +95,7 @@ $env:SW_ATTACH_EXISTING_DISPATCH = "1"
 python templates\capability_matrix.py
 ```
 
-输出 `%TEMP%\dsh_sw_matrix\capability_matrix.json`，21 项探测 + 2 项前置健康检查。
+输出 `%TEMP%\dsh_sw_matrix\capability_matrix.json`，23 项探测 + 2 项前置健康检查。
 
 **本机 SW2022 基线（2026-11-23 实测，`pass_with_limitations`）：**
 
